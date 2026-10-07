@@ -1,18 +1,41 @@
 import React from 'react';
-import { X } from 'lucide-react';
-import { usePrefsStore } from '../../store/prefs';
+import { Monitor, Sun, Moon } from 'lucide-react';
+import { usePrefsStore, ThemePref } from '../../store/prefs';
+import { Modal } from '../../ui/Modal';
+import { SegmentedControl } from '../../ui/SegmentedControl';
+import styles from './SettingsModal.module.css';
 
 export interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({
-  isOpen,
-  onClose,
-}) => {
-  const fontSize = usePrefsStore((s) => s.fontSize);
-  const setFontSize = usePrefsStore((s) => s.setFontSize);
+const THEME_OPTIONS: { value: ThemePref; label: React.ReactNode }[] = [
+  { value: 'system', label: <><Monitor size={14} aria-hidden /> System</> },
+  { value: 'light', label: <><Sun size={14} aria-hidden /> Light</> },
+  { value: 'dark', label: <><Moon size={14} aria-hidden /> Dark</> },
+];
+
+const Row: React.FC<{ id: string; label: string; hint: string; children: React.ReactNode }> = ({
+  id,
+  label,
+  hint,
+  children,
+}) => (
+  <div className={styles.row}>
+    <div>
+      <label htmlFor={id} className={styles.label}>
+        {label}
+      </label>
+      <div className={styles.hint}>{hint}</div>
+    </div>
+    {children}
+  </div>
+);
+
+export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
+  const theme = usePrefsStore((s) => s.theme);
+  const setTheme = usePrefsStore((s) => s.setTheme);
   const reducedMotion = usePrefsStore((s) => s.reducedMotion);
   const setReducedMotion = usePrefsStore((s) => s.setReducedMotion);
   const showAddresses = usePrefsStore((s) => s.showAddresses);
@@ -20,116 +43,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const stepLimit = usePrefsStore((s) => s.stepLimit);
   const setStepLimit = usePrefsStore((s) => s.setStepLimit);
 
-  if (!isOpen) return null;
-
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.65)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 200,
-        padding: '16px',
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: '400px',
-          backgroundColor: 'var(--bg-2)',
-          border: '1px solid var(--line-2)',
-          borderRadius: 'var(--r-12)',
-          boxShadow: 'var(--shadow-popover)',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid var(--line-1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <span style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-1)' }}>
-            Settings
-          </span>
-          <button
-            onClick={onClose}
-            style={{ color: 'var(--text-3)', cursor: 'pointer' }}
+    <Modal title="Settings" isOpen={isOpen} onClose={onClose}>
+      <section className={styles.section}>
+        <h3 className={styles.heading}>Theme</h3>
+        <SegmentedControl fill aria-label="Theme" options={THEME_OPTIONS} value={theme} onChange={setTheme} />
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.heading}>Running</h3>
+        <Row id="settings-step-limit" label="Step limit" hint="Maximum steps traced per run">
+          <select
+            id="settings-step-limit"
+            className={styles.select}
+            value={stepLimit}
+            onChange={(e) => setStepLimit(Number(e.target.value))}
           >
-            <X size={16} />
-          </button>
-        </div>
+            <option value={2000}>2,000</option>
+            <option value={5000}>5,000 (default)</option>
+            <option value={10000}>10,000</option>
+            <option value={20000}>20,000</option>
+          </select>
+        </Row>
+      </section>
 
-        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {/* Step Limit */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: '13px', color: 'var(--text-1)' }}>Step limit</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-3)' }}>
-                Max execution steps per run
-              </div>
-            </div>
-            <select
-              value={stepLimit}
-              onChange={(e) => setStepLimit(Number(e.target.value))}
-              style={{
-                backgroundColor: 'var(--bg-1)',
-                border: '1px solid var(--line-2)',
-                borderRadius: 'var(--r-4)',
-                color: 'var(--text-1)',
-                padding: '4px 8px',
-                fontSize: '12px',
-              }}
-            >
-              <option value={2000}>2,000 steps</option>
-              <option value={5000}>5,000 steps (default)</option>
-              <option value={10000}>10,000 steps</option>
-              <option value={20000}>20,000 steps</option>
-            </select>
-          </div>
-
-          {/* Show Addresses for C/C++ */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: '13px', color: 'var(--text-1)' }}>C/C++ Pointer Addresses</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-3)' }}>
-                Display memory address tags
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={showAddresses}
-              onChange={(e) => setShowAddresses(e.target.checked)}
-              style={{ cursor: 'pointer', accentColor: 'var(--exec)' }}
-            />
-          </div>
-
-          {/* Reduced Motion Override */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontSize: '13px', color: 'var(--text-1)' }}>Reduced motion</div>
-              <div style={{ fontSize: '11px', color: 'var(--text-3)' }}>
-                Use crossfades and tints instead of sliding
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={reducedMotion}
-              onChange={(e) => setReducedMotion(e.target.checked)}
-              style={{ cursor: 'pointer', accentColor: 'var(--exec)' }}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
+      <section className={styles.section}>
+        <h3 className={styles.heading}>Display</h3>
+        <Row id="settings-addresses" label="Pointer addresses" hint="Show memory addresses in C and C++">
+          <input
+            id="settings-addresses"
+            type="checkbox"
+            className={styles.checkbox}
+            checked={showAddresses}
+            onChange={(e) => setShowAddresses(e.target.checked)}
+          />
+        </Row>
+        <Row id="settings-motion" label="Reduced motion" hint="Fade values instead of sliding them">
+          <input
+            id="settings-motion"
+            type="checkbox"
+            className={styles.checkbox}
+            checked={reducedMotion}
+            onChange={(e) => setReducedMotion(e.target.checked)}
+          />
+        </Row>
+      </section>
+    </Modal>
   );
 };
-

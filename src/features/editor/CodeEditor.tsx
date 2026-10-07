@@ -14,6 +14,10 @@ import {
   setBreakpointsEffect,
 } from './extensions/execLine';
 import { stateAt } from '../../trace/reconstruct';
+import { Button } from '../../ui/Button';
+import { DisclosureButton } from '../../ui/Disclosure';
+import { KeyCombo, modKey } from '../../ui/Kbd';
+import styles from './CodeEditor.module.css';
 
 export interface CodeEditorProps {
   onRun?: () => void;
@@ -36,10 +40,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
   const toggleBreakpoint = usePlaybackStore((s) => s.toggleBreakpoint);
 
   const [stdinOpen, setStdinOpen] = useState(false);
-  const [execLineTop, setExecLineTop] = useState<number | null>(null);
-  const [execLineHeight, setExecLineHeight] = useState<number>(22);
 
-  // Initialize CodeMirror instance
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -96,7 +97,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
     };
   }, [language]);
 
-  // Update doc if external code changes (e.g. example selected)
+  // Push external code changes (an example was picked) into the editor.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -108,7 +109,6 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
     }
   }, [code]);
 
-  // Update breakpoints
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -117,11 +117,13 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
     });
   }, [breakpoints]);
 
-  // Sync execution line and auto-scroll
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || !trace || trace.steps.length === 0) {
-      setExecLineTop(null);
+    if (!view) return;
+    if (!trace || trace.steps.length === 0) {
+      view.dispatch({
+        effects: setExecLineEffect.of({ currentLine: null, justRanLine: null, errorLine: null }),
+      });
       return;
     }
 
@@ -145,10 +147,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
         const lineObj = view.state.doc.line(activeLine);
         const lineBlock = view.lineBlockAt(lineObj.from);
 
-        setExecLineTop(lineBlock.top);
-        setExecLineHeight(lineBlock.height);
-
-        // Smart auto-scrolling: keep active line in middle 60% of viewport
+        // Only scroll when the line leaves the middle 60%, so stepping doesn't jitter.
         const scrollInfo = view.scrollDOM.getBoundingClientRect();
         const linePos = lineBlock.top - view.scrollDOM.scrollTop;
 
@@ -158,135 +157,42 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
           });
         }
       } catch {
-        setExecLineTop(null);
+        // Line no longer exists in the edited document.
       }
-    } else {
-      setExecLineTop(null);
     }
   }, [trace, currentStepIndex]);
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        height: '100%',
-        backgroundColor: 'var(--bg-1)',
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Stale Trace Banner */}
+    <div className={styles.pane}>
       {isStale && (
-        <div
-          style={{
-            backgroundColor: 'var(--bg-3)',
-            borderBottom: '1px solid var(--line-1)',
-            padding: '4px 12px',
-            fontSize: '11.5px',
-            color: 'var(--text-2)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            zIndex: 10,
-          }}
-        >
-          <span>Code changed · Run again (⌘↵) to retrace</span>
+        <div className={styles.stale} role="status">
+          <span>Code changed since the last run.</span>
           {onRun && (
-            <button
-              onClick={onRun}
-              style={{
-                color: 'var(--exec)',
-                fontWeight: 500,
-                fontSize: '11.5px',
-                cursor: 'pointer',
-              }}
-            >
-              Retrace now
-            </button>
+            <Button size="sm" variant="ghost" onClick={onRun}>
+              Run again <KeyCombo keys={[modKey, '↵']} />
+            </Button>
           )}
         </div>
       )}
 
-      {/* Editor View Container */}
-      <div
-        ref={containerRef}
-        style={{
-          flex: 1,
-          height: '100%',
-          overflow: 'auto',
-          position: 'relative',
-        }}
-      >
-        {/* Animated Execution Line Indicator */}
-        {execLineTop !== null && (
-          <div
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: 0,
-              height: `${execLineHeight}px`,
-              transform: `translateY(${execLineTop}px)`,
-              transition: 'transform 200ms cubic-bezier(0.2, 0, 0, 1)',
-              backgroundColor: 'var(--exec-dim)',
-              borderLeft: '2px solid var(--exec)',
-              pointerEvents: 'none',
-              zIndex: 3,
-            }}
-          />
-        )}
-      </div>
+      <div ref={containerRef} className={styles.editor} />
 
-      {/* Stdin Drawer */}
-      <div
-        style={{
-          borderTop: '1px solid var(--line-1)',
-          backgroundColor: 'var(--bg-2)',
-        }}
-      >
-        <div
-          onClick={() => setStdinOpen(!stdinOpen)}
-          style={{
-            padding: '4px 12px',
-            fontSize: '11px',
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            color: 'var(--text-3)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            cursor: 'pointer',
-          }}
-        >
-          <span>Standard Input (Stdin)</span>
-          <span style={{ fontSize: '10px' }}>{stdinOpen ? '▾' : '▸'}</span>
-        </div>
+      <div className={styles.stdin}>
+        <DisclosureButton block open={stdinOpen} aria-controls="stdin-input" onClick={() => setStdinOpen(!stdinOpen)}>
+          Input (stdin)
+          {!stdinOpen && stdin && <span className={styles.stdinHint}>{stdin.split('\n').length} lines</span>}
+        </DisclosureButton>
         {stdinOpen && (
-          <div style={{ padding: '0 12px 8px 12px' }}>
-            <textarea
-              value={stdin}
-              onChange={(e) => setStdin(e.target.value)}
-              placeholder="Input lines for input() / scanf / cin..."
-              style={{
-                width: '100%',
-                height: '56px',
-                backgroundColor: 'var(--bg-1)',
-                border: '1px solid var(--line-2)',
-                borderRadius: 'var(--r-4)',
-                color: 'var(--text-1)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '12px',
-                padding: '6px 8px',
-                resize: 'none',
-              }}
-            />
-          </div>
+          <textarea
+            id="stdin-input"
+            aria-label="Input (stdin)"
+            className={styles.stdinInput}
+            value={stdin}
+            onChange={(e) => setStdin(e.target.value)}
+            placeholder="One value per line, read by input(), scanf or cin"
+          />
         )}
       </div>
     </div>
   );
 };
-

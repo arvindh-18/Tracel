@@ -1,0 +1,28 @@
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-16);
+  padding: var(--sp-8) 0;
+  color: var(--text-2);
+}
+
+.row + .row {
+  border-top: 1px solid var(--line-1);
+}
+
+.keys {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.or {
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+}

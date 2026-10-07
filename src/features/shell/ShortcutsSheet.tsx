@@ -1,105 +1,44 @@
 import React from 'react';
-import { X } from 'lucide-react';
-import { Kbd } from '../../ui/Kbd';
+import { Modal } from '../../ui/Modal';
+import { Kbd, modKey } from '../../ui/Kbd';
+import styles from './ShortcutsSheet.module.css';
 
 export interface ShortcutsSheetProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-export const ShortcutsSheet: React.FC<ShortcutsSheetProps> = ({
-  isOpen,
-  onClose,
-}) => {
-  if (!isOpen) return null;
+// Each entry is a list of alternatives; each alternative is a chord of keys.
+const SHORTCUTS: { label: string; keys: string[][] }[] = [
+  { label: 'Run or retrace', keys: [[modKey, 'Enter']] },
+  { label: 'Play or pause', keys: [['Space'], [modKey, '.']] },
+  { label: 'Step forward', keys: [['→'], ['F10']] },
+  { label: 'Step back', keys: [['←'], ['Shift', 'F10']] },
+  { label: 'First or last step', keys: [['Home'], ['End']] },
+  { label: 'Restart', keys: [['R']] },
+  { label: 'Playback speed, 0.5× to 4×', keys: [['1–5']] },
+  { label: 'Toggle breakpoint', keys: [['F9']] },
+  { label: 'Keyboard shortcuts', keys: [['?']] },
+];
 
-  const shortcuts = [
-    { label: 'Run / Retrace', keys: ['⌘ / Ctrl', 'Enter'] },
-    { label: 'Play / Pause', keys: ['Space'] },
-    { label: 'Step Forward', keys: ['→', 'or', 'F10'] },
-    { label: 'Step Backward', keys: ['←', 'or', 'Shift+F10'] },
-    { label: 'First / Last Step', keys: ['Home', 'End'] },
-    { label: 'Restart Trace', keys: ['R'] },
-    { label: 'Toggle Breakpoint', keys: ['F9'] },
-    { label: 'Exit to Editor', keys: ['Esc'] },
-    { label: 'Keyboard Shortcuts', keys: ['?'] },
-  ];
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.65)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 200,
-        padding: '16px',
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: '440px',
-          backgroundColor: 'var(--bg-2)',
-          border: '1px solid var(--line-2)',
-          borderRadius: 'var(--r-12)',
-          boxShadow: 'var(--shadow-popover)',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid var(--line-1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <span style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-1)' }}>
-            Keyboard Shortcuts
-          </span>
-          <button
-            onClick={onClose}
-            style={{ color: 'var(--text-3)', cursor: 'pointer' }}
-          >
-            <X size={16} />
-          </button>
+export const ShortcutsSheet: React.FC<ShortcutsSheetProps> = ({ isOpen, onClose }) => (
+  <Modal title="Keyboard shortcuts" size="md" isOpen={isOpen} onClose={onClose}>
+    <dl className={styles.list}>
+      {SHORTCUTS.map((s) => (
+        <div key={s.label} className={styles.row}>
+          <dt>{s.label}</dt>
+          <dd className={styles.keys}>
+            {s.keys.map((chord, i) => (
+              <React.Fragment key={chord.join('+')}>
+                {i > 0 && <span className={styles.or}>or</span>}
+                {chord.map((k) => (
+                  <Kbd key={k}>{k}</Kbd>
+                ))}
+              </React.Fragment>
+            ))}
+          </dd>
         </div>
-
-        <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {shortcuts.map((s, idx) => (
-            <div
-              key={idx}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '4px 0',
-                fontSize: '12.5px',
-              }}
-            >
-              <span style={{ color: 'var(--text-2)' }}>{s.label}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {s.keys.map((k, i) =>
-                  k === 'or' ? (
-                    <span key={i} style={{ fontSize: '11px', color: 'var(--text-3)' }}>
-                      or
-                    </span>
-                  ) : (
-                    <Kbd key={i}>{k}</Kbd>
-                  )
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
+      ))}
+    </dl>
+  </Modal>
+);

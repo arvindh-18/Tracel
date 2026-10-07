@@ -1,0 +1,52 @@
+.section + .section {
+  margin-top: var(--sp-24);
+}
+
+.heading {
+  margin-bottom: var(--sp-8);
+  color: var(--text-2);
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-16);
+  padding: var(--sp-8) 0;
+}
+
+.row + .row {
+  border-top: 1px solid var(--line-1);
+}
+
+.label {
+  font-size: var(--fs-body);
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+}
+
+.select {
+  height: var(--h-control-sm);
+  padding: 0 var(--sp-8);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-cell);
+  font-size: var(--fs-title);
+  font-variant-numeric: tabular-nums;
+}
+
+.select:hover {
+  border-color: var(--line-3);
+}
+
+.checkbox {
+  width: var(--sp-16);
+  height: var(--sp-16);
+  accent-color: var(--exec);
+  cursor: pointer;
+}

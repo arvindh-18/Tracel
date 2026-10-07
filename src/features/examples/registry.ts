@@ -2,19 +2,16 @@ export interface Example {
   id: string;
   language: 'python' | 'c' | 'cpp';
   title: string;
-  category: 'Basics' | 'Structures' | 'Algorithms' | 'Errors';
-  description: string;
+  category: 'Basics' | 'Data structures' | 'Algorithms' | 'Errors';
   code: string;
 }
 
 export const EXAMPLES: Example[] = [
-  // --- PYTHON BASICS ---
   {
     id: 'py-variables',
     language: 'python',
     title: 'Variables',
     category: 'Basics',
-    description: 'Create variables and observe state change',
     code: `x = 10
 y = 20
 z = x + y
@@ -26,7 +23,6 @@ print(z)
     language: 'python',
     title: 'Conditionals',
     category: 'Basics',
-    description: 'Branch evaluation and taken path',
     code: `x = 10
 if x > 5:
     x = 20
@@ -39,7 +35,6 @@ else:
     language: 'python',
     title: 'Loops',
     category: 'Basics',
-    description: 'For loop accumulation and iteration counting',
     code: `total = 0
 for i in range(5):
     total += i
@@ -51,7 +46,6 @@ print("Final total:", total)
     language: 'python',
     title: 'Functions',
     category: 'Basics',
-    description: 'Call frame push and return value pop',
     code: `def add(a, b):
     return a + b
 
@@ -62,9 +56,8 @@ print(result)
   {
     id: 'py-recursion',
     language: 'python',
-    title: 'Recursion (Factorial)',
+    title: 'Recursion (factorial)',
     category: 'Basics',
-    description: 'Deep stack frames and unwinding',
     code: `def fact(n):
     if n <= 1:
         return 1
@@ -74,13 +67,11 @@ print(fact(4))
 `,
   },
 
-  // --- PYTHON STRUCTURES ---
   {
     id: 'py-arrays',
     language: 'python',
-    title: 'Array Mutation',
-    category: 'Structures',
-    description: 'In-place element update and active index marker',
+    title: 'Array mutation',
+    category: 'Data structures',
     code: `numbers = [10, 20, 30]
 for i in range(len(numbers)):
     numbers[i] *= 2
@@ -91,8 +82,7 @@ print(numbers)
     id: 'py-stack',
     language: 'python',
     title: 'Stack (LIFO)',
-    category: 'Structures',
-    description: 'Push drop-in and pop exit animations',
+    category: 'Data structures',
     code: `# tracel: stack = stack
 stack = []
 stack.append(10)
@@ -106,8 +96,7 @@ print("Popped:", top)
     id: 'py-queue',
     language: 'python',
     title: 'Queue (FIFO)',
-    category: 'Structures',
-    description: 'Enqueue rear and dequeue front shift',
+    category: 'Data structures',
     code: `from collections import deque
 # tracel: queue = queue
 queue = deque()
@@ -121,9 +110,8 @@ print("Dequeued:", first)
   {
     id: 'py-linkedlist',
     language: 'python',
-    title: 'Linked List',
-    category: 'Structures',
-    description: 'Node chaining and pointer arrows',
+    title: 'Linked list',
+    category: 'Data structures',
     code: `class Node:
     def __init__(self, val, next=None):
         self.val = val
@@ -139,9 +127,8 @@ while curr:
   {
     id: 'py-aliasing',
     language: 'python',
-    title: 'Object Aliasing',
-    category: 'Structures',
-    description: 'Two names referencing one heap object',
+    title: 'Object aliasing',
+    category: 'Data structures',
     code: `a = [1, 2]
 b = a
 b.append(3)
@@ -149,13 +136,11 @@ print("a is:", a)
 `,
   },
 
-  // --- PYTHON ALGORITHMS ---
   {
     id: 'py-bubble-sort',
     language: 'python',
-    title: 'Bubble Sort',
+    title: 'Bubble sort',
     category: 'Algorithms',
-    description: 'Pairwise comparisons and swap arcs',
     code: `nums = [5, 2, 8, 1, 4]
 n = len(nums)
 for i in range(n):
@@ -167,13 +152,11 @@ print("Sorted:", nums)
 `,
   },
 
-  // --- PYTHON ERRORS ---
   {
     id: 'py-error-index',
     language: 'python',
-    title: 'Index Error',
+    title: 'Index error',
     category: 'Errors',
-    description: 'Out of range subscript access with state note',
     code: `arr = [3, 8, 1, 9, 4]
 index = 5
 total = 10
@@ -183,22 +166,19 @@ total += arr[index]
   {
     id: 'py-error-zerodiv',
     language: 'python',
-    title: 'Zero Division',
+    title: 'Division by zero',
     category: 'Errors',
-    description: 'Division by zero exception snapshot',
     code: `numerator = 100
 denominator = 0
 result = numerator / denominator
 `,
   },
 
-  // --- C EXAMPLES ---
   {
     id: 'c-swap',
     language: 'c',
-    title: 'Pointer Swap',
+    title: 'Pointer swap',
     category: 'Basics',
-    description: 'Pass-by-pointer and memory manipulation',
     code: `#include <stdio.h>
 
 void swap(int *a, int *b) {
@@ -218,9 +198,8 @@ int main() {
   {
     id: 'c-arrays',
     language: 'c',
-    title: 'Array Sum',
-    category: 'Structures',
-    description: 'Fixed-size array indexing in C',
+    title: 'Array sum',
+    category: 'Data structures',
     code: `#include <stdio.h>
 
 int main() {
@@ -237,9 +216,8 @@ int main() {
   {
     id: 'c-out-of-bounds',
     language: 'c',
-    title: 'Out of Bounds Error',
+    title: 'Out-of-bounds write',
     category: 'Errors',
-    description: 'Array bounds violation detected by Tracel',
     code: `#include <stdio.h>
 
 int main() {
@@ -250,13 +228,11 @@ int main() {
 `,
   },
 
-  // --- C++ EXAMPLES ---
   {
     id: 'cpp-stl',
     language: 'cpp',
-    title: 'STL Containers',
-    category: 'Structures',
-    description: 'std::vector, std::stack, and std::queue',
+    title: 'STL containers',
+    category: 'Data structures',
     code: `#include <iostream>
 #include <vector>
 #include <stack>
@@ -285,9 +261,8 @@ int main() {
   {
     id: 'cpp-linkedlist',
     language: 'cpp',
-    title: 'Node with Pointers',
-    category: 'Structures',
-    description: 'Linked list nodes with new and delete',
+    title: 'Linked list with pointers',
+    category: 'Data structures',
     code: `#include <iostream>
 using namespace std;
 

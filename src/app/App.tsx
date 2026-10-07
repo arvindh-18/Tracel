@@ -10,8 +10,13 @@ import { useSessionStore } from '../store/session';
 import { usePlaybackStore, PlaybackSpeed } from '../store/playback';
 import { usePrefsStore } from '../store/prefs';
 import { engineHost } from '../engine/host';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { useApplyTheme } from './useTheme';
+import styles from './App.module.css';
 
 export const App: React.FC = () => {
+  useApplyTheme();
+
   const language = useSessionStore((s) => s.language);
   const code = useSessionStore((s) => s.codeByLanguage[s.language]);
   const stdin = useSessionStore((s) => s.stdin);
@@ -43,14 +48,12 @@ export const App: React.FC = () => {
   );
   const [mobileTab, setMobileTab] = useState<'code' | 'lens'>('code');
 
-  // Track window resizing for responsive layout
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Run handler: execute Python or C/C++ in worker
   const handleRun = useCallback(async () => {
     if (isRunning) return;
 
@@ -74,7 +77,6 @@ export const App: React.FC = () => {
       setIsRunning(false);
       setTrace(trace);
 
-      // Reset playback to start and autoplay trace smoothly
       restart();
       play();
     } catch (err: any) {
@@ -96,21 +98,17 @@ export const App: React.FC = () => {
     setIsRunning(false);
   }, [setIsRunning]);
 
-  // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // ⌘/Ctrl + Enter: Run
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
         handleRun();
         return;
       }
 
-      // Check if target is inside an input or textarea
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       const isInputFocused = targetTag === 'input' || targetTag === 'textarea';
 
-      // Shortcuts valid anywhere
       if (e.key === 'F10' && !e.shiftKey) {
         e.preventDefault();
         stepForward();
@@ -129,7 +127,7 @@ export const App: React.FC = () => {
 
       if (isInputFocused) return;
 
-      // Shortcuts valid outside editor inputs
+      // Single-key shortcuts must not fire while typing in the stdin box.
       if (e.key === ' ') {
         e.preventDefault();
         togglePlay();
@@ -172,19 +170,7 @@ export const App: React.FC = () => {
   const isMobile = windowWidth < 768;
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100vw',
-        height: '100vh',
-        backgroundColor: 'var(--bg-0)',
-        color: 'var(--text-1)',
-        overflow: 'hidden',
-        position: 'relative',
-      }}
-    >
-      {/* Top Bar */}
+    <div className={styles.app}>
       <TopBar
         onRun={handleRun}
         onStop={handleStop}
@@ -192,79 +178,39 @@ export const App: React.FC = () => {
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      {/* Main Workspace Area */}
-      <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+      <main className={styles.main}>
         {isMobile ? (
-          // Mobile Segmented Tab View (<768px)
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <div
-              style={{
-                display: 'flex',
-                borderBottom: '1px solid var(--line-1)',
-                backgroundColor: 'var(--bg-2)',
-              }}
-            >
-              <button
-                onClick={() => setMobileTab('code')}
-                style={{
-                  flex: 1,
-                  padding: '8px',
-                  fontWeight: mobileTab === 'code' ? 600 : 400,
-                  color: mobileTab === 'code' ? 'var(--exec)' : 'var(--text-2)',
-                  borderBottom:
-                    mobileTab === 'code' ? '2px solid var(--exec)' : 'none',
-                }}
-              >
-                Code
-              </button>
-              <button
-                onClick={() => setMobileTab('lens')}
-                style={{
-                  flex: 1,
-                  padding: '8px',
-                  fontWeight: mobileTab === 'lens' ? 600 : 400,
-                  color: mobileTab === 'lens' ? 'var(--exec)' : 'var(--text-2)',
-                  borderBottom:
-                    mobileTab === 'lens' ? '2px solid var(--exec)' : 'none',
-                }}
-              >
-                Lens
-              </button>
+          <div className={styles.mobile}>
+            <div className={styles.mobileTabs}>
+              <SegmentedControl
+                fill
+                aria-label="Panel"
+                options={[
+                  { value: 'code', label: 'Code' },
+                  { value: 'lens', label: 'Trace' },
+                ]}
+                value={mobileTab}
+                onChange={setMobileTab}
+              />
             </div>
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              {mobileTab === 'code' ? (
-                <CodeEditor onRun={handleRun} />
-              ) : (
-                <LensPanel onRun={handleRun} />
-              )}
+            <div className={styles.mobilePane}>
+              {mobileTab === 'code' ? <CodeEditor onRun={handleRun} /> : <LensPanel />}
             </div>
           </div>
         ) : (
-          // Desktop & Tablet Splitter View
           <Splitter
             direction={isTablet ? 'vertical' : 'horizontal'}
             defaultSplit={isTablet ? 45 : 52}
             left={<CodeEditor onRun={handleRun} />}
-            right={<LensPanel onRun={handleRun} />}
+            right={<LensPanel />}
           />
         )}
       </main>
 
-      {/* Timeline Transport Dock */}
       <TimelineDock />
 
-      {/* Shortcuts Sheet Modal */}
-      <ShortcutsSheet
-        isOpen={shortcutsOpen}
-        onClose={() => setShortcutsOpen(false)}
-      />
-
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-      />
+      <ShortcutsSheet isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 };
-

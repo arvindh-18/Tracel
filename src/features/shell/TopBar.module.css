@@ -1,0 +1,110 @@
+.bar {
+  position: relative;
+  z-index: var(--z-bar);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-16);
+  min-height: var(--h-bar);
+  padding: var(--sp-8) var(--sp-16);
+  background-color: var(--bg-raised);
+  border-bottom: 1px solid var(--line-2);
+  user-select: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+.mark path {
+  stroke: var(--text-1);
+}
+
+.mark circle {
+  fill: var(--exec);
+}
+
+.wordmark {
+  font-size: var(--fs-brand);
+  font-weight: 600;
+}
+
+.source {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+.languages {
+  min-width: 168px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-left: auto;
+}
+
+.runtime {
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+}
+
+.info {
+  width: 320px;
+  padding: var(--sp-12);
+  color: var(--text-2);
+  font-size: var(--fs-title);
+}
+
+.info p + p {
+  margin-top: var(--sp-8);
+}
+
+.infoTitle {
+  margin-bottom: var(--sp-4);
+  color: var(--text-1);
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.infoMeta {
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+}
+
+.run {
+  min-width: 72px;
+  margin-left: var(--sp-8);
+}
+
+@media (max-width: 1023px) {
+  .runtimeLabel {
+    display: none;
+  }
+}
+
+/* Two rows on phones: brand and actions on top, source controls below. */
+@media (max-width: 639px) {
+  .bar {
+    flex-wrap: wrap;
+    row-gap: var(--sp-8);
+    padding: var(--sp-8) var(--sp-16);
+  }
+
+  .source {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .languages {
+    flex: 1;
+  }
+
+  .info {
+    width: min(320px, calc(100vw - var(--sp-32)));
+  }
+}
