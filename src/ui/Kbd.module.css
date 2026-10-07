@@ -1,0 +1,21 @@
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--h-chip);
+  height: var(--h-chip);
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line-2);
+  border-bottom-width: 2px;
+  border-radius: var(--r-cell);
+  background-color: var(--bg-raised);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  line-height: 1;
+}
+
+.combo {
+  display: inline-flex;
+  gap: var(--sp-2);
+}

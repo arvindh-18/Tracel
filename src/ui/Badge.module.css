@@ -1,0 +1,27 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: var(--h-chip);
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-cell);
+  background-color: var(--bg-hover);
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.exec { background-color: var(--exec-soft); border-color: var(--exec-line); color: var(--text-1); }
+.create { background-color: var(--sem-create-soft); border-color: var(--sem-create-line); color: var(--sem-create); }
+.update { background-color: var(--sem-update-soft); border-color: var(--sem-update-line); color: var(--sem-update); }
+.remove { background-color: var(--sem-remove-soft); border-color: var(--sem-remove-line); color: var(--sem-remove); }
+.ref { background-color: var(--sem-ref-soft); border-color: var(--sem-ref-line); color: var(--sem-ref); }
+.call { background-color: var(--sem-call-soft); border-color: var(--sem-call-line); color: var(--sem-call); }
+.info { background-color: var(--sem-info-soft); border-color: var(--sem-info-line); color: var(--sem-info); }

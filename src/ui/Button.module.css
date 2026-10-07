@@ -1,0 +1,86 @@
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-8);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.sm {
+  height: var(--h-control-sm);
+  padding: 0 var(--sp-12);
+  font-size: var(--fs-title);
+}
+
+.md {
+  height: var(--h-control-md);
+  padding: 0 var(--sp-16);
+  font-size: var(--fs-body);
+}
+
+.primary {
+  background-color: var(--exec);
+  color: var(--exec-on);
+  font-weight: 600;
+}
+
+.primary:hover:not(:disabled) {
+  background-color: color-mix(in oklab, var(--exec) 88%, var(--text-1));
+}
+
+.secondary {
+  background-color: var(--bg-raised);
+  border-color: var(--line-2);
+  color: var(--text-1);
+}
+
+.secondary:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+}
+
+.ghost {
+  color: var(--text-2);
+}
+
+.ghost:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.button:active:not(:disabled) {
+  background-color: var(--bg-active);
+}
+
+.primary:active:not(:disabled) {
+  background-color: color-mix(in oklab, var(--exec) 78%, var(--text-1));
+}
+
+.button:disabled {
+  opacity: 0.5;
+}
+
+.icon {
+  display: inline-flex;
+}
+
+/* Indeterminate progress line while the runtime loads. */
+.loading::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.5;
+  transform-origin: left;
+  animation: sweep 1.2s var(--ease-standard) infinite;
+}
+
+@keyframes sweep {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); opacity: 0; }
+}

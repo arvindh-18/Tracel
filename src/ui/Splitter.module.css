@@ -1,0 +1,53 @@
+.container {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.vertical {
+  flex-direction: column;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.first {
+  flex: 0 0 var(--split);
+}
+
+.second {
+  flex: 1 1 0;
+}
+
+/* A 1px rule with a wider invisible hit area straddling it. */
+.handle {
+  position: relative;
+  flex: 0 0 1px;
+  z-index: 10;
+  background-color: var(--line-2);
+  transition: background-color var(--dur-fast) ease;
+}
+
+.handle::before {
+  content: '';
+  position: absolute;
+  inset: 0 calc(-1 * var(--sp-4));
+  cursor: col-resize;
+}
+
+.vertical .handle::before {
+  inset: calc(-1 * var(--sp-4)) 0;
+  cursor: row-resize;
+}
+
+.handle:hover,
+.handle:focus-visible,
+.dragging .handle {
+  background-color: var(--line-3);
+}

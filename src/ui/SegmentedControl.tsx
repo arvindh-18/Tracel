@@ -1,8 +1,11 @@
 import React from 'react';
+import { cx } from './cx';
+import styles from './SegmentedControl.module.css';
 
 export interface SegmentOption<T extends string | number> {
   value: T;
   label: React.ReactNode;
+  title?: string;
 }
 
 export interface SegmentedControlProps<T extends string | number> {
@@ -10,6 +13,10 @@ export interface SegmentedControlProps<T extends string | number> {
   value: T;
   onChange: (value: T) => void;
   size?: 'sm' | 'md';
+  /** Stretch to the container width instead of sizing to content. */
+  fill?: boolean;
+  'aria-label'?: string;
+  className?: string;
 }
 
 export function SegmentedControl<T extends string | number>({
@@ -17,21 +24,12 @@ export function SegmentedControl<T extends string | number>({
   value,
   onChange,
   size = 'md',
+  fill = false,
+  className,
+  ...aria
 }: SegmentedControlProps<T>) {
-  const isSm = size === 'sm';
-
   return (
-    <div
-      role="radiogroup"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '2px',
-        backgroundColor: 'var(--bg-3)',
-        borderRadius: 'var(--r-6)',
-        border: '1px solid var(--line-1)',
-      }}
-    >
+    <div role="radiogroup" className={cx(styles.group, styles[size], fill && styles.fill, className)} {...aria}>
       {options.map((opt) => {
         const selected = opt.value === value;
         return (
@@ -40,19 +38,9 @@ export function SegmentedControl<T extends string | number>({
             type="button"
             role="radio"
             aria-checked={selected}
+            title={opt.title}
             onClick={() => onChange(opt.value)}
-            style={{
-              padding: isSm ? '2px 8px' : '4px 10px',
-              fontSize: isSm ? '11px' : '12px',
-              fontWeight: selected ? 600 : 400,
-              color: selected ? 'var(--text-1)' : 'var(--text-2)',
-              backgroundColor: selected ? 'var(--bg-1)' : 'transparent',
-              borderRadius: 'var(--r-4)',
-              border: 'none',
-              cursor: 'pointer',
-              boxShadow: selected ? '0 1px 3px rgba(0,0,0,0.3)' : 'none',
-              transition: 'background-color 140ms ease, color 140ms ease',
-            }}
+            className={cx(styles.option, selected && styles.selected)}
           >
             {opt.label}
           </button>
@@ -61,4 +49,3 @@ export function SegmentedControl<T extends string | number>({
     </div>
   );
 }
-

@@ -1,0 +1,45 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-16);
+  background-color: var(--scrim);
+}
+
+.dialog {
+  width: 100%;
+  max-height: calc(100vh - var(--sp-32));
+  overflow-y: auto;
+  background-color: var(--bg-raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-modal);
+  box-shadow: var(--shadow-float);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-8) var(--sp-8) var(--sp-8) var(--sp-16);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.body {
+  padding: var(--sp-16);
+}
+
+.sm {
+  max-width: 400px;
+}
+
+.md {
+  max-width: 460px;
+}

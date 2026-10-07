@@ -1,0 +1,64 @@
+.root {
+  position: relative;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + var(--sp-4));
+  z-index: var(--z-popover);
+  min-width: 200px;
+  max-height: min(480px, calc(100vh - 120px));
+  overflow-y: auto;
+  padding: var(--sp-4);
+  background-color: var(--bg-raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-control);
+  box-shadow: var(--shadow-float);
+}
+
+.start {
+  left: 0;
+}
+
+.end {
+  right: 0;
+}
+
+.group + .group {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line-1);
+}
+
+.groupLabel {
+  padding: var(--sp-4) var(--sp-8);
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--h-control-md);
+  padding: 0 var(--sp-8);
+  border-radius: var(--r-cell);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  text-align: left;
+}
+
+.item:hover,
+.item:focus-visible {
+  background-color: var(--bg-hover);
+}
+
+.item:active {
+  background-color: var(--bg-active);
+}
+
+.itemSelected {
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--exec);
+}

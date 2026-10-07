@@ -1,0 +1,30 @@
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-height: var(--h-control-sm);
+  border-radius: var(--r-cell);
+  color: var(--text-2);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  text-align: left;
+}
+
+.toggle:hover {
+  color: var(--text-1);
+}
+
+.block {
+  display: flex;
+  width: 100%;
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.open .chevron {
+  transform: rotate(90deg);
+}

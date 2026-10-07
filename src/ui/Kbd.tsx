@@ -1,29 +1,21 @@
 import React from 'react';
+import styles from './Kbd.module.css';
 
-export interface KbdProps {
-  children: React.ReactNode;
-}
+export const isMac =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-export const Kbd: React.FC<KbdProps> = ({ children }) => {
-  return (
-    <kbd
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1px 5px',
-        fontSize: '11px',
-        fontFamily: 'var(--font-mono)',
-        fontWeight: 500,
-        color: 'var(--text-3)',
-        backgroundColor: 'var(--bg-3)',
-        border: '1px solid var(--line-2)',
-        borderRadius: 'var(--r-4)',
-        lineHeight: '1.2',
-      }}
-    >
-      {children}
-    </kbd>
-  );
-};
+/** Platform label for the primary modifier: ⌘ on Apple devices, Ctrl elsewhere. */
+export const modKey = isMac ? '⌘' : 'Ctrl';
 
+export const Kbd: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <kbd className={styles.kbd}>{children}</kbd>
+);
+
+/** Renders a chord such as ["⌘", "↵"] as adjacent keys. */
+export const KeyCombo: React.FC<{ keys: string[] }> = ({ keys }) => (
+  <span className={styles.combo}>
+    {keys.map((k) => (
+      <Kbd key={k}>{k}</Kbd>
+    ))}
+  </span>
+);

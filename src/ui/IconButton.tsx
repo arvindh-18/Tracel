@@ -1,9 +1,12 @@
 import React from 'react';
+import { cx } from './cx';
+import styles from './IconButton.module.css';
 
 export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon: React.ReactNode;
+  /** Accessible name; also shown as the native tooltip. */
   label: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md';
   active?: boolean;
 }
 
@@ -12,38 +15,17 @@ export const IconButton: React.FC<IconButtonProps> = ({
   label,
   size = 'md',
   active = false,
-  className = '',
-  disabled,
-  style,
+  className,
+  type = 'button',
   ...props
-}) => {
-  const dim = size === 'sm' ? 24 : size === 'lg' ? 36 : 30;
-
-  return (
-    <button
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: `${dim}px`,
-        height: `${dim}px`,
-        borderRadius: 'var(--r-6)',
-        backgroundColor: active ? 'var(--bg-4)' : 'transparent',
-        color: active ? 'var(--text-1)' : 'var(--text-2)',
-        border: 'none',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.4 : 1,
-        transition: 'background-color 120ms ease, color 120ms ease',
-        ...style,
-      }}
-      className={`tracel-icon-btn ${className}`}
-      {...props}
-    >
-      {icon}
-    </button>
-  );
-};
-
+}) => (
+  <button
+    type={type}
+    title={label}
+    aria-label={label}
+    className={cx(styles.button, styles[size], active && styles.active, className)}
+    {...props}
+  >
+    {icon}
+  </button>
+);

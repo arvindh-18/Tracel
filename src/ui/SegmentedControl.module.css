@@ -1,0 +1,49 @@
+.group {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: var(--sp-2);
+  background-color: var(--bg-hover);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-control);
+}
+
+.fill {
+  display: grid;
+  width: 100%;
+}
+
+.option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  border-radius: var(--r-cell);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.sm .option {
+  height: var(--h-segment-sm);
+  padding: 0 var(--sp-8);
+  font-size: var(--fs-meta);
+}
+
+.md .option {
+  height: var(--h-segment-md);
+  padding: 0 var(--sp-12);
+  font-size: var(--fs-title);
+}
+
+.option:hover {
+  color: var(--text-1);
+}
+
+.selected {
+  background-color: var(--bg-raised);
+  color: var(--text-1);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--line-2);
+}
