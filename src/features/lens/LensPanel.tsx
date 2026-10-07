@@ -19,10 +19,19 @@ import styles from './LensPanel.module.css';
 
 export const LensPanel: React.FC = () => {
   const trace = useSessionStore((s) => s.trace);
+  const sessionError = useSessionStore((s) => s.error);
   const currentStepIndex = usePlaybackStore((s) => s.currentStepIndex);
   const [hoveredRefId, setHoveredRefId] = useState<string | null>(null);
 
   if (!trace || trace.steps.length === 0) {
+    // A program rejected before it ran (parse or unsupported feature) has an error but no steps.
+    if (sessionError) {
+      return (
+        <div className={styles.panel}>
+          <ErrorCard error={sessionError} />
+        </div>
+      );
+    }
     return <EmptyState />;
   }
 
@@ -50,7 +59,7 @@ export const LensPanel: React.FC = () => {
   const activeError = step.kind === 'exception' ? trace.error : null;
 
   const renderStructure = (obj: HeapObject) => {
-    const props = { obj, label: varLabelsByHeapId.get(obj.id), events, onHoverRef: setHoveredRefId };
+    const props = { obj, label: varLabelsByHeapId.get(obj.id), frames, events, onHoverRef: setHoveredRefId };
     const lensKind: LensKind = trace.lensHints[obj.id] || 'array';
     switch (lensKind) {
       case 'stack':

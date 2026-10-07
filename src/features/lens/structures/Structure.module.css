@@ -101,10 +101,83 @@
   font-variant-numeric: tabular-nums;
 }
 
-.changed + .index,
-.indexChanged {
-  color: var(--sem-update);
+/*
+ * State grammar, one meaning per color across every structure:
+ *   current  (--exec)        the one element this step is looking at
+ *   visited  (--sem-ref)     already on the path in this run
+ *   changed  (--sem-update)  value written this step
+ *   added    (--sem-create)  just inserted
+ *   removing (--sem-remove)  leaving; turns red before it fades out
+ */
+.current {
+  background-color: var(--exec-soft);
+  border-color: var(--exec);
+  transition: none;
+}
+
+.visited {
+  background-color: var(--sem-ref-soft);
+  border-color: var(--sem-ref-line);
+}
+
+.removing,
+.leaving .cell {
+  background-color: var(--sem-remove-soft);
+  border-color: var(--sem-remove);
+  color: var(--sem-remove);
+  transition: none;
+}
+
+.indexCurrent {
+  color: var(--exec);
   font-weight: 600;
+}
+
+/* Reserved row above cells for ▼ cursor markers, so cells never shift when one appears. */
+.markers {
+  display: flex;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--sp-16);
+}
+
+.marker {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--sem-ref);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.markerCurrent {
+  color: var(--exec);
+  font-weight: 600;
+}
+
+.label {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+
+.caption {
+  margin-left: auto;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-cell);
+  background-color: var(--bg-hover);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+}
+
+.null {
+  color: var(--sem-remove);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
 }
 
 .end {
@@ -129,4 +202,8 @@
 
 .secondary {
   color: var(--text-2);
+}
+
+.leaving {
+  pointer-events: none;
 }

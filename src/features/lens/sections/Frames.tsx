@@ -28,7 +28,8 @@ export const FramesSection: React.FC<FramesSectionProps> = ({ frames, events, on
   return (
     <Section title={frames.length > 1 ? 'Call stack' : 'Variables'} count={frames.length > 1 ? frames.length : undefined}>
       <div className={styles.list}>
-        {frames.map((frame, idx) => {
+        {/* The trace lists frames outermost first; show the running one first. */}
+        {[...frames].reverse().map((frame, idx) => {
           const isTop = idx === 0;
           // Only the active frame is open by default; callers are collapsed.
           const isOpen = isTop || (expanded[frame.id] ?? false);

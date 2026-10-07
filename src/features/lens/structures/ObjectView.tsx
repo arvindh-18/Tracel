@@ -1,15 +1,17 @@
 import React from 'react';
-import { HeapObject, TraceEvent } from '../../../trace/schema';
+import { Frame, HeapObject, TraceEvent } from '../../../trace/schema';
 import { Badge } from '../../../ui/Badge';
 import { cx } from '../../../ui/cx';
 import { ValueCell } from '../values/ValueCell';
 import { StructureHeader } from './StructureHeader';
+import { caption } from './grammar';
 import styles from './Structure.module.css';
 import own from './ObjectView.module.css';
 
 export interface ObjectViewProps {
   obj: HeapObject;
   label?: string;
+  frames: Frame[];
   events: TraceEvent[];
   onHoverRef?: (heapId: string | null) => void;
 }
@@ -22,7 +24,7 @@ export const ObjectView: React.FC<ObjectViewProps> = ({ obj, label, events, onHo
 
   return (
     <div className={cx(styles.card, obj.freed && own.freed)}>
-      <StructureHeader name={label || obj.id} meta={obj.typeName} address={obj.address}>
+      <StructureHeader name={label || obj.id} meta={obj.typeName} address={obj.address} caption={caption(events, obj.id)}>
         {obj.freed && <Badge variant="remove">freed</Badge>}
       </StructureHeader>
       {fields.length === 0 ? (

@@ -10,3 +10,18 @@
   border-top: none;
   border-radius: 0 0 var(--r-cell) var(--r-cell);
 }
+
+.item {
+  display: grid;
+  grid-template-columns: 1fr 48px;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+.top {
+  justify-self: start;
+}
+
+.hidden {
+  visibility: hidden;
+}

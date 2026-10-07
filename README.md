@@ -1,109 +1,49 @@
-# Tracel — See your code come alive.
+# Tracel
 
-**Tracel** is a premium program-execution visualization environment for developers and learners. It lets you write Python, C, or C++ code, run it, and watch execution unfold step-by-step:
-- Follow the execution light as it travels through lines and loops
-- Inspect call stack frames with their local variables
-- Watch data structures (arrays, stacks, queues, linked lists, trees, dicts, objects) mutate with physical animations
-- Travel backward and forward in time across an interactive execution timeline
+Tracel runs a Python, C or C++ program in the browser and lets you step through it line by line while it shows the call frames, variables and data structures at each step.
 
-Tracel is **not** an online compiler, **not** a basic code editor with a console, and **not** an AI assistant. There are no AI chatbots, sparkles, or neural glow effects. Its intelligence comes directly from precise program analysis and physical visualization.
+![Tracel in the light theme](docs/screenshots/light.png)
+![Tracel in the dark theme](docs/screenshots/dark.png)
 
----
+## Running it
 
-## Supported Languages & Runtimes
+Requires Node.js 18 or later.
 
-### 1. Python
-- **Runtime:** Real CPython compiled to WebAssembly via **Pyodide** running inside a dedicated Web Worker.
-- **Tracing:** `sys.settrace` hook capturing statement boundaries, line events, call/return frames, and AST construct metadata (`if`, `for`, `while`).
-- **Sandbox:** Import allowlist includes `math`, `random` (seeded 0), `collections`, `heapq`, `bisect`, `itertools`, `functools`, `string`, `typing`, `dataclasses`, and the custom `tracel` helper module (`tracel.Stack`, `tracel.Queue`).
-- **Limits:** 5,000 steps execution cap (configurable up to 20,000), 8-second watchdog timeout.
-
-### 2. C and C++
-- **Runtime:** Tracel's own typed AST interpreter executing real C/C++ semantics inside a Web Worker.
-- **Memory Model:** Typed block allocation model (`Block { id, region, elemType, elements, address }`) with synthetic 32-bit/64-bit address spaces.
-- **Safety Checks:** Out-of-bounds indexing, null pointer dereferences, use-after-free, double free, and uninitialized variable reads are detected and reported with exact line pointers.
-- **STL / Standard Library:** `<stdio.h>` (`printf`, `scanf`), `std::cout`, `std::cin`, `std::vector`, `std::stack`, `std::queue`, `malloc`/`free`, `new`/`delete`.
-- **Honest Subsets:** Unsupported features (e.g. user-defined `template<typename T>`, multiple compilation units) are rejected upfront with line-anchored explanations.
-
----
-
-## Getting Started
-
-### Prerequisites
-- Node.js (v18+)
-- npm
-
-### Installation & Development
 ```bash
-# Install dependencies
 npm install
-
-# Start local development server
-npm run dev
-
-# Run unit and golden test suite
-npm test
-
-# Build production bundle
-npm run build
+npm run dev              # development server on http://localhost:5173
+npm test                 # unit and golden tests
+npm run build            # type-check and production build
+npm run check:contrast   # WCAG contrast check for both themes
 ```
 
----
+`node scripts/capture-screenshots.js` serves the last build, so run `npm run build` first. It captures every viewport in both themes into `qa-screenshots/`.
 
-## Design System & Motion
+## Languages and limits
 
-Tracel features a calm, technical dark theme built on design tokens:
-- **Surfaces:** `--bg-0 #0A0C0F` through `--bg-4 #242A35`
-- **Execution Accent:** `--exec #FFB547` (warm amber execution light)
-- **Semantic Colors:** `--sem-create #6FD3A0`, `--sem-update #FFB547`, `--sem-remove #F0817A`, `--sem-ref #7CB4FF`, `--sem-call #B9A6FF`
-- **Typography:** Geist (UI), JetBrains Mono (code and runtime values)
-- **Motion:** Speed-aware Framer Motion tokens (`instant`, `fast`, `base`, `slow`, `tint`), with strict support for `prefers-reduced-motion: reduce`.
+**Python** runs CPython 3.12 (Pyodide) in a Web Worker, traced with `sys.settrace`. Imports are limited to an allowlist (`math`, `random` seeded with 0, `collections`, `heapq`, `bisect`, `itertools`, `functools`, `string`, `typing`, `dataclasses`, and the `tracel` helper module). Network and file access are removed.
 
----
+**C and C++** run on Tracel's own interpreter, also in a Web Worker. It covers a subset: arrays, pointers, structs, classes, `malloc`/`free`, `new`/`delete`, `printf`/`scanf`, `std::cout`/`std::cin`, `std::vector`, `std::stack` and `std::queue`. Out-of-bounds access, null dereference, use-after-free, double free and uninitialized reads stop the run on the offending line. Unsupported features such as user-defined templates are rejected before the program runs.
 
-## Keyboard Shortcuts
+Every run stops after 5,000 steps by default (up to 20,000 in Settings), and a watchdog ends any run that takes longer than 8 seconds.
 
-| Action | Shortcut |
+## Keyboard shortcuts
+
+| Action | Keys |
 |---|---|
-| **Run / Retrace** | `⌘ / Ctrl + Enter` |
-| **Play / Pause** | `Space` (outside editor) or `⌘/Ctrl + .` |
-| **Step Forward** | `→` (outside editor) or `F10` |
-| **Step Backward** | `←` (outside editor) or `Shift + F10` |
-| **First / Last Step** | `Home` / `End` |
-| **Restart Trace** | `R` |
-| **Playback Speed** | `1` (0.5×) · `2` (1×) · `3` (1.5×) · `4` (2×) · `5` (4×) |
-| **Toggle Breakpoint** | `F9` on current cursor line |
-| **Keyboard Shortcuts Help** | `?` |
+| Run | ⌘ Enter / Ctrl Enter |
+| Play or pause | Space, or ⌘ . / Ctrl . |
+| Step forward / back | → / ← (outside the editor), F10 / Shift F10 |
+| First / last step | Home / End |
+| Restart | R |
+| Playback speed | 1 to 5 |
+| Toggle breakpoint | F9 |
+| Shortcut list | ? |
 
----
+## Themes
 
-## Adding Examples & Adapters
+Light, dark, or follow the system setting, chosen from the top bar or Settings. All colors are tokens in `src/styles/tokens.css`; components never use raw colors.
 
-### Adding an Example Program
-Add an entry in `src/features/examples/registry.ts`:
-```ts
-{
-  id: 'py-custom',
-  language: 'python',
-  title: 'My Custom Algorithm',
-  category: 'Algorithms',
-  description: 'Short summary of the algorithm',
-  code: `...`,
-}
-```
+## Architecture
 
-### Adding a Language Adapter
-Implement the `LanguageAdapter` interface in `src/engine/adapters/types.ts` and register it in `src/engine/host.ts`:
-```ts
-export interface LanguageAdapter {
-  id: string;
-  displayName: string;
-  engineLabel: string;
-  fileExtension: string;
-  prepare(): Promise<void>;
-  run(req: RunRequest, onProgress?: (steps: number) => void): Promise<RawTrace>;
-  supportInfo: SupportInfo;
-}
-```
-The visualization layer consumes only normalized `Trace` and `Step` models, ensuring new language backends integrate seamlessly without modifying UI components.
-
+See [ARCHITECTURE.md](ARCHITECTURE.md). Examples live in `src/features/examples/registry.ts`; new languages implement `LanguageAdapter` in `src/engine/adapters/types.ts`.

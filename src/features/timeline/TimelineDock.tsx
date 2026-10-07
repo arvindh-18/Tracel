@@ -21,6 +21,7 @@ export const TimelineDock: React.FC = () => {
   const trace = useSessionStore((s) => s.trace);
   const isRunning = useSessionStore((s) => s.isRunning);
   const runProgress = useSessionStore((s) => s.runProgress);
+  const error = useSessionStore((s) => s.error);
 
   const currentStepIndex = usePlaybackStore((s) => s.currentStepIndex);
   const isPlaying = usePlaybackStore((s) => s.isPlaying);
@@ -69,7 +70,9 @@ export const TimelineDock: React.FC = () => {
     ? `Tracing… ${runProgress.toLocaleString()} steps`
     : hasTrace
       ? current?.step.narration || 'Executing program'
-      : 'Not run yet';
+      : error
+        ? `Did not run: ${error.title || error.kind} on line ${error.line}`
+        : 'Not run yet';
 
   return (
     <footer className={styles.dock}>
@@ -127,10 +130,12 @@ export const TimelineDock: React.FC = () => {
           style={{ '--progress': progress } as React.CSSProperties}
           onPointerDown={handlePointerDown}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowRight') stepForward();
-            else if (e.key === 'ArrowLeft') stepBack();
-            else if (e.key === 'Home') jumpToStep(0);
-            else if (e.key === 'End') jumpToStep(maxIndex);
+            const action = { ArrowRight: stepForward, ArrowLeft: stepBack, Home: () => jumpToStep(0), End: () => jumpToStep(maxIndex) }[e.key];
+            if (!action) return;
+            // The same keys are global shortcuts in App; stop them so one press is one step.
+            e.preventDefault();
+            e.stopPropagation();
+            action();
           }}
         >
           <div className={styles.rail}>

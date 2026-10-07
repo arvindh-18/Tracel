@@ -1,3 +1,4 @@
+import { MotionConfig } from 'motion/react';
 import React, { useState, useEffect, useCallback } from 'react';
 import { TopBar } from '../features/shell/TopBar';
 import { CodeEditor } from '../features/editor/CodeEditor';
@@ -40,6 +41,7 @@ export const App: React.FC = () => {
   const setSpeed = usePlaybackStore((s) => s.setSpeed);
 
   const stepLimit = usePrefsStore((s) => s.stepLimit);
+  const reducedMotion = usePrefsStore((s) => s.reducedMotion);
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -170,6 +172,7 @@ export const App: React.FC = () => {
   const isMobile = windowWidth < 768;
 
   return (
+    <MotionConfig reducedMotion={reducedMotion ? 'always' : 'user'}>
     <div className={styles.app}>
       <TopBar
         onRun={handleRun}
@@ -212,5 +215,6 @@ export const App: React.FC = () => {
       <ShortcutsSheet isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
+    </MotionConfig>
   );
 };

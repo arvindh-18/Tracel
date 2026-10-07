@@ -1,6 +1,6 @@
 .lane {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--sp-8);
 }
 
@@ -13,4 +13,18 @@
   overflow-x: auto;
   border-top: 2px solid var(--line-2);
   border-bottom: 2px solid var(--line-2);
+}
+
+.exit,
+.entry {
+  padding-bottom: var(--sp-8);
+  font-family: var(--font-mono);
+}
+
+.exit {
+  color: var(--sem-remove-line);
+}
+
+.entry {
+  color: var(--sem-create-line);
 }

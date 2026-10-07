@@ -6,3 +6,15 @@
   font-family: var(--font-mono);
   font-size: var(--fs-title);
 }
+
+/* Each entry spans the three columns so its row can carry a state tint. */
+.entry {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 0 var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-cell);
+  transition: background-color var(--dur-tint) ease, border-color var(--dur-tint) ease;
+}

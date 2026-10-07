@@ -6,6 +6,13 @@
   padding-bottom: var(--sp-4);
 }
 
+.column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
 .node {
   display: flex;
   flex-shrink: 0;
@@ -16,6 +23,7 @@
   font-family: var(--font-mono);
   font-size: var(--fs-title);
   overflow: hidden;
+  transition: background-color var(--dur-tint) ease, border-color var(--dur-tint) ease;
 }
 
 .value {
@@ -38,15 +46,21 @@
   width: var(--sp-8);
   height: var(--sp-8);
   border-radius: 50%;
-  background-color: var(--sem-ref);
+  background-color: var(--text-3);
 }
 
 .arrow {
-  color: var(--sem-ref);
+  color: var(--text-3);
 }
 
-.null {
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
+/* The edge just followed into the current node, and edges along the path, stay lit. */
+.arrowLit {
+  color: var(--sem-ref);
+  font-weight: 600;
+}
+
+.walkers {
+  display: flex;
+  gap: var(--sp-4);
+  min-height: var(--sp-16);
 }
