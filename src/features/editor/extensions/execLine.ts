@@ -1,18 +1,6 @@
-import {
-  Extension,
-  StateField,
-  StateEffect,
-  RangeSet,
-} from '@codemirror/state';
-import {
-  EditorView,
-  Decoration,
-  DecorationSet,
-  GutterMarker,
-  gutter,
-} from '@codemirror/view';
+import { Extension, StateField, StateEffect, RangeSet, Range } from '@codemirror/state';
+import { EditorView, Decoration, GutterMarker, gutter } from '@codemirror/view';
 
-// State effects for execution lines and errors
 export const setExecLineEffect = StateEffect.define<{
   currentLine: number | null;
   justRanLine: number | null;
@@ -22,63 +10,27 @@ export const setExecLineEffect = StateEffect.define<{
 
 export const setBreakpointsEffect = StateEffect.define<Set<number>>();
 
-class ExecGutterMarker extends GutterMarker {
+class ClassMarker extends GutterMarker {
+  constructor(private readonly className: string) {
+    super();
+  }
+  eq(other: GutterMarker) {
+    return other instanceof ClassMarker && other.className === this.className;
+  }
   toDOM() {
     const el = document.createElement('span');
-    el.style.color = 'var(--exec)';
-    el.style.fontSize = '12px';
-    el.style.fontWeight = 'bold';
-    el.style.marginLeft = '2px';
-    el.textContent = '▸';
+    el.className = this.className;
     return el;
   }
 }
 
-class BreakpointMarker extends GutterMarker {
-  toDOM() {
-    const el = document.createElement('span');
-    el.style.display = 'inline-block';
-    el.style.width = '8px';
-    el.style.height = '8px';
-    el.style.borderRadius = '50%';
-    el.style.backgroundColor = 'var(--sem-remove)';
-    el.style.marginLeft = '4px';
-    el.style.boxShadow = '0 0 4px var(--sem-remove)';
-    return el;
-  }
-}
+const execMarker = new ClassMarker('cm-marker-exec');
+const breakpointMarker = new ClassMarker('cm-marker-breakpoint');
+const errorMarker = new ClassMarker('cm-marker-error');
 
-class ErrorGutterMarker extends GutterMarker {
-  toDOM() {
-    const el = document.createElement('span');
-    el.style.color = 'var(--sem-remove)';
-    el.style.fontSize = '12px';
-    el.style.fontWeight = 'bold';
-    el.style.marginLeft = '2px';
-    el.textContent = '●';
-    return el;
-  }
-}
-
-const currentLineDeco = Decoration.line({
-  attributes: {
-    style:
-      'background-color: var(--exec-dim); border-left: 2px solid var(--exec); transition: background-color 150ms ease;',
-  },
-});
-
-const justRanLineDeco = Decoration.line({
-  attributes: {
-    style: 'border-left: 1px dashed var(--line-3);',
-  },
-});
-
-const errorLineDeco = Decoration.line({
-  attributes: {
-    style:
-      'background-color: var(--sem-remove-soft); border-left: 2px solid var(--sem-remove);',
-  },
-});
+const currentLineDeco = Decoration.line({ class: 'cm-execLine' });
+const justRanLineDeco = Decoration.line({ class: 'cm-justRanLine' });
+const errorLineDeco = Decoration.line({ class: 'cm-errorLine' });
 
 export interface ExecLineState {
   currentLine: number | null;
@@ -98,39 +50,31 @@ export const execLineField = StateField.define<ExecLineState>({
     };
   },
   update(value, tr) {
-    let next = { ...value };
+    let next = value;
     for (const effect of tr.effects) {
       if (effect.is(setExecLineEffect)) {
-        next = {
-          ...next,
-          currentLine: effect.value.currentLine,
-          justRanLine: effect.value.justRanLine,
-          errorLine: effect.value.errorLine,
-          range: effect.value.range,
-        };
+        next = { ...next, ...effect.value };
       } else if (effect.is(setBreakpointsEffect)) {
-        next = {
-          ...next,
-          breakpoints: new Set(effect.value),
-        };
+        next = { ...next, breakpoints: new Set(effect.value) };
       }
     }
     return next;
   },
   provide: (f) =>
-    EditorView.decorations.from(f, (state) => {
-      const { currentLine, justRanLine, errorLine, range } = state;
-      const builder: RangeSet<Decoration>[] = [];
-      const decos: { pos: number; deco: Decoration }[] = [];
+    EditorView.decorations.compute([f, 'doc'], (state) => {
+      const { currentLine, justRanLine, errorLine } = state.field(f);
+      const doc = state.doc;
+      const decos: Range<Decoration>[] = [];
+      const add = (line: number | null, deco: Decoration) => {
+        if (line && line > 0 && line <= doc.lines) decos.push(deco.range(doc.line(line).from));
+      };
 
-      // Line decorations
-      if (errorLine && errorLine > 0 && errorLine <= 5000) {
-        try {
-          // decoration will be applied on line view
-        } catch {}
-      }
+      // An error line takes over the executing line; only one class per line.
+      if (errorLine) add(errorLine, errorLineDeco);
+      else add(currentLine, currentLineDeco);
+      if (justRanLine !== currentLine && justRanLine !== errorLine) add(justRanLine, justRanLineDeco);
 
-      return Decoration.none;
+      return Decoration.set(decos, true);
     }),
 });
 
@@ -139,46 +83,27 @@ export function createExecGutter(onToggleBreakpoint?: (line: number) => void): E
     class: 'cm-exec-gutter',
     markers(view) {
       const state = view.state.field(execLineField);
-      const markers: { from: number; marker: GutterMarker }[] = [];
       const doc = view.state.doc;
+      const markers: Range<GutterMarker>[] = [];
+      const add = (line: number | null, marker: GutterMarker) => {
+        if (line && line > 0 && line <= doc.lines) markers.push(marker.range(doc.line(line).from));
+      };
 
-      if (state.currentLine && state.currentLine > 0 && state.currentLine <= doc.lines) {
-        try {
-          const line = doc.line(state.currentLine);
-          markers.push({ from: line.from, marker: new ExecGutterMarker() });
-        } catch {}
-      }
-
-      if (state.errorLine && state.errorLine > 0 && state.errorLine <= doc.lines) {
-        try {
-          const line = doc.line(state.errorLine);
-          markers.push({ from: line.from, marker: new ErrorGutterMarker() });
-        } catch {}
-      }
+      if (state.errorLine) add(state.errorLine, errorMarker);
+      else add(state.currentLine, execMarker);
 
       for (const bp of state.breakpoints) {
-        if (bp > 0 && bp <= doc.lines && bp !== state.currentLine) {
-          try {
-            const line = doc.line(bp);
-            markers.push({ from: line.from, marker: new BreakpointMarker() });
-          } catch {}
-        }
+        if (bp !== state.currentLine && bp !== state.errorLine) add(bp, breakpointMarker);
       }
 
-      markers.sort((a, b) => a.from - b.from);
-      const rangeSet = RangeSet.of(markers.map((m) => m.marker.range(m.from)));
-      return rangeSet;
+      return RangeSet.of(markers, true);
     },
     domEventHandlers: {
       mousedown(view, line) {
-        if (onToggleBreakpoint) {
-          const lineNo = view.state.doc.lineAt(line.from).number;
-          onToggleBreakpoint(lineNo);
-          return true;
-        }
-        return false;
+        if (!onToggleBreakpoint) return false;
+        onToggleBreakpoint(view.state.doc.lineAt(line.from).number);
+        return true;
       },
     },
   });
 }
-

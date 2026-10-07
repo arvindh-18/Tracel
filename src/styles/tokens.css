@@ -1,106 +1,153 @@
-/* Tracel Design Tokens */
+/*
+ * Every color in the app comes from this file. Both themes define the same
+ * names; components never branch on the theme.
+ * scripts/check-contrast.ts parses the two theme blocks below, so keep each
+ * color token on one line as `--name: value;`.
+ */
+
 :root {
-  /* Surfaces */
-  --bg-0: #0A0C0F; /* App background (behind everything) */
-  --bg-1: #0F1216; /* Editor + lens surface */
-  --bg-2: #151920; /* Raised: top bar, timeline dock, popovers */
-  --bg-3: #1C212A; /* Hover fills, structure cells */
-  --bg-4: #242A35; /* Pressed / selected fills */
+  --font-ui: "Atkinson Hyperlegible Next", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Hairlines and Borders */
-  --line-1: rgba(255, 255, 255, 0.06); /* Subtle partition lines */
-  --line-2: rgba(255, 255, 255, 0.10); /* Cell borders, input borders */
-  --line-3: rgba(255, 255, 255, 0.16); /* Focused borders, playhead fill */
+  --fs-meta: 12px;
+  --fs-title: 13px;
+  --fs-body: 14px;
+  --fs-brand: 15px;
+  --fs-code: 13.5px;
+  --lh-code: 22px;
 
-  /* Typography Colors (WCAG AA compliant) */
-  --text-1: #E8EBF0; /* Primary high-contrast text */
-  --text-2: #A3ABB8; /* Secondary labels and identifiers */
-  --text-3: #757E8C; /* Muted labels, line numbers (ensures >=4.5:1 on bg-1) */
-  --text-4: #454C57; /* Disabled / uninitialized placeholders */
-
-  /* Execution / Brand Color */
-  --exec: #FFB547;
-  --exec-dim: rgba(255, 181, 71, 0.10);
-  --exec-soft: rgba(255, 181, 71, 0.22);
-  --exec-line: rgba(255, 181, 71, 0.45);
-
-  /* Semantic State Colors */
-  --sem-create: #6FD3A0;
-  --sem-create-soft: rgba(111, 211, 160, 0.14);
-  --sem-create-line: rgba(111, 211, 160, 0.40);
-
-  --sem-update: #FFB547;
-  --sem-update-soft: rgba(255, 181, 71, 0.18);
-  --sem-update-line: rgba(255, 181, 71, 0.45);
-
-  --sem-remove: #F0817A;
-  --sem-remove-soft: rgba(240, 129, 122, 0.14);
-  --sem-remove-line: rgba(240, 129, 122, 0.40);
-
-  --sem-ref: #7CB4FF;
-  --sem-ref-soft: rgba(124, 180, 255, 0.14);
-  --sem-ref-line: rgba(124, 180, 255, 0.40);
-
-  --sem-call: #B9A6FF;
-  --sem-call-soft: rgba(185, 166, 255, 0.14);
-  --sem-call-line: rgba(185, 166, 255, 0.40);
-
-  --sem-info: #8FD1E6;
-  --sem-info-soft: rgba(143, 209, 230, 0.14);
-
-  /* Code Syntax Palette */
-  --syn-keyword: #C9A7FF;
-  --syn-function: #82C8FF;
-  --syn-string: #A8D89A;
-  --syn-number: #F5B37A;
-  --syn-comment: #5D6673;
-  --syn-type: #7FD8C9;
-  --syn-operator: #A3ABB8;
-  --syn-variable: #E8EBF0;
-  --syn-builtin: #7FD8C9;
-
-  /* Typography Fonts */
-  --font-ui: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-
-  /* Spacing Scale (4px base rhythm) */
-  --sp-2: 2px;
+  --sp-2: 2px; /* insets inside segmented controls and key chords only */
   --sp-4: 4px;
-  --sp-6: 6px;
   --sp-8: 8px;
   --sp-12: 12px;
   --sp-16: 16px;
-  --sp-20: 20px;
   --sp-24: 24px;
   --sp-32: 32px;
-  --sp-40: 40px;
-  --sp-56: 56px;
 
-  /* Radii */
-  --r-4: 4px;
-  --r-6: 6px;
-  --r-8: 8px;
-  --r-12: 12px;
-  --r-14: 14px;
-  --r-full: 9999px;
+  --r-cell: 4px;
+  --r-control: 6px;
+  --r-modal: 10px;
 
-  /* Elevation Shadows */
-  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--line-2);
-  --shadow-dock: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--line-2);
+  --h-control-sm: 28px;
+  --h-control-md: 32px;
+  --h-bar: 48px;
+  --h-chip: 20px;
+  --h-segment-sm: 22px;
+  --h-segment-md: 26px;
 
-  /* Focus Outline */
-  --focus-ring: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--exec);
-
-  /* Animation Durations */
-  --duration-instant: 80ms;
-  --duration-fast: 140ms;
-  --duration-base: 220ms;
-  --duration-slow: 320ms;
-  --duration-tint: 900ms;
-
-  /* Animation Easings */
+  /* Keep in sync with src/motion/tokens.ts (Motion needs numbers, CSS needs strings). */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 300ms;
+  --dur-tint: 900ms;
+  --dur-theme: 150ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-enter: cubic-bezier(0, 0, 0, 1);
-  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --z-bar: 40;
+  --z-popover: 100;
+  --z-modal: 200;
 }
 
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #EDE9E0;
+  --bg-surface: #F8F5EF;
+  --bg-raised: #FFFDF9;
+  --bg-hover: #ECE6DA;
+  --bg-active: #E1D9CA;
+
+  --line-1: rgba(46, 36, 18, 0.08);
+  --line-2: rgba(46, 36, 18, 0.15);
+  --line-3: rgba(46, 36, 18, 0.28);
+
+  --text-1: #1D1B17;
+  --text-2: #4C473E;
+  --text-3: #6B6558;
+  --text-4: #A59E90;
+
+  --exec: #C2410C;
+  --exec-on: #FFFFFF;
+  --exec-line-bg: #FBE9A8;
+
+  --sem-create: #2E7A4C;
+  --sem-update: #B25607;
+  --sem-remove: #B3261E;
+  --sem-ref: #2852C4;
+  --sem-call: #6A43BE;
+  --sem-info: #0D7187;
+
+  --syn-keyword: #7A2E8E;
+  --syn-function: #1F5DAA;
+  --syn-string: #2F6A2F;
+  --syn-number: #A0480B;
+  --syn-comment: #6F695C;
+  --syn-type: #0E6D6D;
+
+  --scrim: rgba(29, 27, 23, 0.32);
+  --shadow-float: 0 4px 16px rgba(46, 36, 18, 0.12);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: #121110;
+  --bg-surface: #191816;
+  --bg-raised: #211F1C;
+  --bg-hover: #2A2825;
+  --bg-active: #35322E;
+
+  --line-1: rgba(255, 244, 222, 0.07);
+  --line-2: rgba(255, 244, 222, 0.12);
+  --line-3: rgba(255, 244, 222, 0.22);
+
+  --text-1: #EEEAE1;
+  --text-2: #B7B0A3;
+  --text-3: #8E887B;
+  --text-4: #5C5750;
+
+  --exec: #FF7D47;
+  --exec-on: #1A0E07;
+  --exec-line-bg: rgba(255, 205, 96, 0.13);
+
+  --sem-create: #7FCB95;
+  --sem-update: #F0A85E;
+  --sem-remove: #F2897F;
+  --sem-ref: #8DB3F7;
+  --sem-call: #C3A7F4;
+  --sem-info: #7FC6D5;
+
+  --syn-keyword: #D69CE2;
+  --syn-function: #8FB7F2;
+  --syn-string: #A9CF8F;
+  --syn-number: #F0A96A;
+  --syn-comment: #8E887B;
+  --syn-type: #7DCAC0;
+
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Derived tokens: computed from the theme values above, so they follow the theme. */
+:root {
+  --syn-operator: var(--text-2);
+
+  --exec-soft: color-mix(in oklab, var(--exec) 14%, transparent);
+  --exec-line: color-mix(in oklab, var(--exec) 40%, transparent);
+
+  --sem-create-soft: color-mix(in oklab, var(--sem-create) 14%, transparent);
+  --sem-create-line: color-mix(in oklab, var(--sem-create) 40%, transparent);
+  --sem-update-soft: color-mix(in oklab, var(--sem-update) 14%, transparent);
+  --sem-update-line: color-mix(in oklab, var(--sem-update) 40%, transparent);
+  --sem-remove-soft: color-mix(in oklab, var(--sem-remove) 14%, transparent);
+  --sem-remove-line: color-mix(in oklab, var(--sem-remove) 40%, transparent);
+  --sem-ref-soft: color-mix(in oklab, var(--sem-ref) 14%, transparent);
+  --sem-ref-line: color-mix(in oklab, var(--sem-ref) 40%, transparent);
+  --sem-call-soft: color-mix(in oklab, var(--sem-call) 14%, transparent);
+  --sem-call-line: color-mix(in oklab, var(--sem-call) 40%, transparent);
+  --sem-info-soft: color-mix(in oklab, var(--sem-info) 14%, transparent);
+  --sem-info-line: color-mix(in oklab, var(--sem-info) 40%, transparent);
+
+  --selection-bg: color-mix(in oklab, var(--sem-ref) 22%, transparent);
+}

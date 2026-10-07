@@ -1,6 +1,5 @@
 @import './tokens.css';
 
-/* Modern Reset */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -11,24 +10,40 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: var(--bg-0);
+}
+
+body {
+  background-color: var(--bg-app);
   color: var(--text-1);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Tabular numbers for timeline, steps, indices, addresses */
-.tabular-nums, .mono-nums {
-  font-variant-numeric: tabular-nums;
+::selection {
+  background-color: var(--selection-bg);
 }
 
-/* Custom Scrollbars */
+/* Added by useApplyTheme only while switching, so first paint is never animated. */
+@media (prefers-reduced-motion: no-preference) {
+  .theme-switching,
+  .theme-switching *,
+  .theme-switching *::before,
+  .theme-switching *::after {
+    transition:
+      background-color var(--dur-theme) ease,
+      border-color var(--dur-theme) ease,
+      color var(--dur-theme) ease,
+      fill var(--dur-theme) ease,
+      stroke var(--dur-theme) ease !important;
+  }
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -37,14 +52,13 @@ html, body, #root {
 
 ::-webkit-scrollbar-thumb {
   background: var(--line-2);
-  border-radius: var(--r-4);
+  border-radius: var(--r-cell);
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--line-3);
 }
 
-/* Focus Visible Styling */
 :focus {
   outline: none;
 }
@@ -55,7 +69,7 @@ html, body, #root {
 }
 
 button, input, select, textarea {
-  font-family: inherit;
+  font: inherit;
   color: inherit;
 }
 
@@ -68,10 +82,8 @@ button {
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
 }
 
-/* Accessibility: Visually Hidden */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -84,13 +96,6 @@ button:disabled {
   border-width: 0;
 }
 
-@media (min-width: 768px) {
-  .desktop-only {
-    display: inline !important;
-  }
-}
-
-/* Reduced Motion Override */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
