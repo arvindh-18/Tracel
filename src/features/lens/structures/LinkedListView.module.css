@@ -1,0 +1,52 @@
+.chain {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  overflow-x: auto;
+  padding-bottom: var(--sp-4);
+}
+
+.node {
+  display: flex;
+  flex-shrink: 0;
+  height: var(--h-control-md);
+  background-color: var(--bg-hover);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-cell);
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+  overflow: hidden;
+}
+
+.value {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-8);
+  border-right: 1px solid var(--line-2);
+}
+
+/* The "next" slot: a dot where the arrow leaves from. */
+.next {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--sp-24);
+}
+
+.next::after {
+  content: '';
+  width: var(--sp-8);
+  height: var(--sp-8);
+  border-radius: 50%;
+  background-color: var(--sem-ref);
+}
+
+.arrow {
+  color: var(--sem-ref);
+}
+
+.null {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+}

@@ -1,0 +1,88 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+
+.frame {
+  background-color: var(--bg-raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-control);
+  overflow: hidden;
+}
+
+.top {
+  box-shadow: inset 3px 0 0 var(--sem-call);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-8);
+  min-height: var(--h-control-md);
+  padding: 0 var(--sp-12);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-8);
+}
+
+.name {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.frame:not(.top) .name {
+  color: var(--text-2);
+}
+
+.meta {
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.locals {
+  display: grid;
+  grid-template-columns: minmax(80px, max-content) 1fr;
+  gap: var(--sp-4) var(--sp-16);
+  align-items: center;
+  padding: var(--sp-8) var(--sp-12);
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+}
+
+.varName {
+  color: var(--text-2);
+}
+
+/* The tint fades out once the event is no longer on the current step. */
+.value {
+  width: fit-content;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-cell);
+  transition: background-color var(--dur-tint) ease;
+}
+
+.updated {
+  background-color: var(--sem-update-soft);
+  transition: none;
+}
+
+.created {
+  background-color: var(--sem-create-soft);
+  transition: none;
+}
+
+.empty {
+  padding: var(--sp-8) var(--sp-12);
+  color: var(--text-3);
+  font-size: var(--fs-title);
+}

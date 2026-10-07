@@ -1,0 +1,132 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-12);
+  background-color: var(--bg-raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-control);
+}
+
+.narrow {
+  width: fit-content;
+  min-width: 160px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-8);
+  flex-wrap: wrap;
+}
+
+.name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.meta {
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.address {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  overflow-x: auto;
+  padding-bottom: var(--sp-4);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 44px;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: var(--h-control-md);
+  padding: 0 var(--sp-8);
+  background-color: var(--bg-hover);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-cell);
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+  white-space: nowrap;
+  transition: background-color var(--dur-tint) ease, border-color var(--dur-tint) ease;
+}
+
+.stretch {
+  width: 100%;
+}
+
+/* State classes switch the tint on instantly; removing them fades it out over --dur-tint. */
+.changed {
+  background-color: var(--sem-update-soft);
+  border-color: var(--sem-update);
+  transition: none;
+}
+
+.added {
+  background-color: var(--sem-create-soft);
+  border-color: var(--sem-create);
+  transition: none;
+}
+
+.index {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.changed + .index,
+.indexChanged {
+  color: var(--sem-update);
+  font-weight: 600;
+}
+
+.end {
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+
+.empty {
+  color: var(--text-3);
+  font-size: var(--fs-title);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.secondary {
+  color: var(--text-2);
+}

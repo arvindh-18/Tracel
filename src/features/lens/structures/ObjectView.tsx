@@ -1,6 +1,11 @@
 import React from 'react';
 import { HeapObject, TraceEvent } from '../../../trace/schema';
+import { Badge } from '../../../ui/Badge';
+import { cx } from '../../../ui/cx';
 import { ValueCell } from '../values/ValueCell';
+import { StructureHeader } from './StructureHeader';
+import styles from './Structure.module.css';
+import own from './ObjectView.module.css';
 
 export interface ObjectViewProps {
   obj: HeapObject;
@@ -9,114 +14,31 @@ export interface ObjectViewProps {
   onHoverRef?: (heapId: string | null) => void;
 }
 
-export const ObjectView: React.FC<ObjectViewProps> = ({
-  obj,
-  label,
-  events,
-  onHoverRef,
-}) => {
+export const ObjectView: React.FC<ObjectViewProps> = ({ obj, label, events, onHoverRef }) => {
   const fields = obj.fields ?? [];
+  const changed = new Set(
+    events.flatMap((ev) => (ev.type === 'field_set' && ev.id === obj.id ? [ev.field] : []))
+  );
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        backgroundColor: obj.freed ? 'rgba(255,255,255,0.02)' : 'var(--bg-2)',
-        opacity: obj.freed ? 0.45 : 1,
-        border: `1px solid ${obj.freed ? 'var(--sem-remove-line)' : 'var(--line-1)'}`,
-        borderRadius: 'var(--r-6)',
-        padding: '10px',
-        position: 'relative',
-      }}
-    >
-      {obj.freed && (
-        <span
-          style={{
-            position: 'absolute',
-            top: '6px',
-            right: '8px',
-            fontSize: '10px',
-            fontWeight: 600,
-            color: 'var(--sem-remove)',
-            backgroundColor: 'var(--sem-remove-soft)',
-            padding: '1px 5px',
-            borderRadius: 'var(--r-4)',
-          }}
-        >
-          freed
-        </span>
+    <div className={cx(styles.card, obj.freed && own.freed)}>
+      <StructureHeader name={label || obj.id} meta={obj.typeName} address={obj.address}>
+        {obj.freed && <Badge variant="remove">freed</Badge>}
+      </StructureHeader>
+      {fields.length === 0 ? (
+        <div className={styles.empty}>No fields</div>
+      ) : (
+        <div className={own.fields}>
+          {fields.map(([name, val]) => (
+            <React.Fragment key={name}>
+              <span className={styles.secondary}>{name}</span>
+              <span className={cx(own.value, changed.has(name) && own.changed)}>
+                <ValueCell value={val} onHoverRef={onHoverRef} />
+              </span>
+            </React.Fragment>
+          ))}
+        </div>
       )}
-
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-        }}
-      >
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '12.5px',
-            fontWeight: 600,
-            color: 'var(--text-1)',
-          }}
-        >
-          {label || obj.id}
-        </span>
-        <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>
-          · {obj.typeName}
-        </span>
-      </div>
-
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '4px',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '12px',
-        }}
-      >
-        {fields.length === 0 ? (
-          <div
-            style={{
-              fontSize: '11px',
-              color: 'var(--text-4)',
-              fontStyle: 'italic',
-            }}
-          >
-            (no fields)
-          </div>
-        ) : (
-          fields.map(([fieldName, val], idx) => {
-            const isLast = idx === fields.length - 1;
-            return (
-              <div
-                key={fieldName}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-              >
-                <span style={{ color: 'var(--text-3)', userSelect: 'none' }}>
-                  {isLast ? '└─' : '├─'}
-                </span>
-                <span style={{ color: 'var(--text-2)', minWidth: '60px' }}>
-                  {fieldName}
-                </span>
-                <span style={{ color: 'var(--text-1)' }}>
-                  <ValueCell value={val} onHoverRef={onHoverRef} />
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
     </div>
   );
 };
-

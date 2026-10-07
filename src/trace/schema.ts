@@ -1,4 +1,4 @@
-// Tracel Normalized Trace Schema (§4.2)
+// Language-independent trace model shared by every adapter and the UI.
 
 export type StepIndex = number;
 export type HeapId = string;

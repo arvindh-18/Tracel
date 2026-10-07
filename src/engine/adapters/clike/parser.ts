@@ -20,7 +20,7 @@ export interface AstProgram extends AstNode {
 }
 
 export function parseClike(source: string): ParseResult {
-  // Pre-execution validation check for unsupported features (§6.2)
+  // Pre-execution validation check for unsupported features
   const lines = source.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const lineText = lines[i]!;

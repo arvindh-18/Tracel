@@ -1,0 +1,12 @@
+/* Open-topped container: the stack grows upward from its floor. */
+.well {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--sp-4);
+  min-height: 80px;
+  padding: var(--sp-4);
+  border: 2px solid var(--line-2);
+  border-top: none;
+  border-radius: 0 0 var(--r-cell) var(--r-cell);
+}

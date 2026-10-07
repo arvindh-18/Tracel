@@ -1,0 +1,16 @@
+.lane {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+/* A tube open at both ends. */
+.channel {
+  display: flex;
+  gap: var(--sp-4);
+  min-width: 120px;
+  padding: var(--sp-4);
+  overflow-x: auto;
+  border-top: 2px solid var(--line-2);
+  border-bottom: 2px solid var(--line-2);
+}

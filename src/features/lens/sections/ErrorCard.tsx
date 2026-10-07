@@ -1,121 +1,27 @@
 import React, { useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { TraceError } from '../../../trace/schema';
+import { DisclosureButton } from '../../../ui/Disclosure';
+import styles from './ErrorCard.module.css';
 
-export interface ErrorCardProps {
-  error: TraceError;
-}
-
-export const ErrorCard: React.FC<ErrorCardProps> = ({ error }) => {
-  const [showRawDetails, setShowRawDetails] = useState(false);
+export const ErrorCard: React.FC<{ error: TraceError }> = ({ error }) => {
+  const [showRaw, setShowRaw] = useState(false);
 
   return (
-    <div
-      role="alert"
-      style={{
-        backgroundColor: 'var(--sem-remove-soft)',
-        border: '1px solid var(--sem-remove-line)',
-        borderRadius: 'var(--r-8)',
-        padding: '12px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        color: 'var(--text-1)',
-      }}
-    >
-      {/* Top Banner */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <AlertCircle size={16} color="var(--sem-remove)" />
-          <span
-            style={{
-              fontSize: '11px',
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-              color: 'var(--sem-remove)',
-            }}
-          >
-            Execution Stopped
-          </span>
-        </div>
-        <span
-          style={{
-            fontSize: '11px',
-            fontFamily: 'var(--font-mono)',
-            color: 'var(--text-3)',
-          }}
-        >
-          Line {error.line}
-        </span>
+    <div role="alert" className={styles.card}>
+      <div className={styles.header}>
+        <AlertCircle size={16} className={styles.icon} aria-hidden />
+        <h2 className={styles.title}>{error.title || error.kind}</h2>
+        <span className={styles.line}>Line {error.line}</span>
       </div>
-
-      {/* Title & Plain-Language Explanation */}
+      <p className={styles.explanation}>{error.explanation}</p>
+      {error.stateNote && <p className={styles.note}>{error.stateNote}</p>}
       <div>
-        <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>
-          {error.title || error.kind}
-        </div>
-        <div
-          style={{
-            fontSize: '12.5px',
-            color: 'var(--text-2)',
-            lineHeight: '1.5',
-          }}
-        >
-          {error.explanation}
-        </div>
-      </div>
-
-      {/* State Note */}
-      {error.stateNote && (
-        <div
-          style={{
-            fontSize: '11.5px',
-            color: 'var(--text-3)',
-            fontStyle: 'italic',
-          }}
-        >
-          {error.stateNote}
-        </div>
-      )}
-
-      {/* Raw Error Details Accordion */}
-      <div style={{ marginTop: '4px' }}>
-        <button
-          onClick={() => setShowRawDetails(!showRawDetails)}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '4px',
-            fontSize: '11.5px',
-            color: 'var(--text-3)',
-            cursor: 'pointer',
-          }}
-        >
-          {showRawDetails ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          <span>Raw runtime details</span>
-        </button>
-
-        {showRawDetails && (
-          <pre
-            style={{
-              marginTop: '6px',
-              padding: '6px 8px',
-              backgroundColor: 'var(--bg-1)',
-              borderRadius: 'var(--r-4)',
-              border: '1px solid var(--line-1)',
-              fontSize: '11.5px',
-              fontFamily: 'var(--font-mono)',
-              color: 'var(--text-2)',
-              whiteSpace: 'pre-wrap',
-            }}
-          >
+        <DisclosureButton open={showRaw} onClick={() => setShowRaw(!showRaw)}>
+          Runtime message
+        </DisclosureButton>
+        {showRaw && (
+          <pre className={styles.raw}>
             {error.kind}: {error.message}
           </pre>
         )}
@@ -123,4 +29,3 @@ export const ErrorCard: React.FC<ErrorCardProps> = ({ error }) => {
     </div>
   );
 };
-

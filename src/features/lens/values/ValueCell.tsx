@@ -1,59 +1,30 @@
 import React from 'react';
 import { Primitive, Value } from '../../../trace/schema';
+import { usePrefsStore } from '../../../store/prefs';
+import { cx } from '../../../ui/cx';
+import styles from './ValueCell.module.css';
 
-export interface PrimitiveValueProps {
-  value: Primitive;
-}
-
-export const PrimitiveValue: React.FC<PrimitiveValueProps> = ({ value }) => {
+export const PrimitiveValue: React.FC<{ value: Primitive }> = ({ value }) => {
   switch (value.k) {
     case 'int':
-      return <span style={{ color: 'var(--syn-number)' }}>{value.v}</span>;
     case 'float':
-      return <span style={{ color: 'var(--syn-number)' }}>{value.v}</span>;
+      return <span className={styles.number}>{value.v}</span>;
     case 'bool':
-      return (
-        <span style={{ color: 'var(--syn-keyword)', fontWeight: 600 }}>
-          {value.v ? 'True' : 'False'}
-        </span>
-      );
+      return <span className={styles.keyword}>{value.v ? 'True' : 'False'}</span>;
     case 'str':
-      return (
-        <span style={{ color: 'var(--syn-string)' }}>
-          "{value.v}"
-        </span>
-      );
+      return <span className={styles.string}>"{value.v}"</span>;
     case 'char':
-      return (
-        <span style={{ color: 'var(--syn-string)' }}>
-          '{String.fromCharCode(value.v)}'
-        </span>
-      );
+      return <span className={styles.string}>'{String.fromCharCode(value.v)}'</span>;
     case 'none':
-      return (
-        <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>
-          None
-        </span>
-      );
+      return <span className={styles.none}>None</span>;
     case 'uninit':
       return (
-        <span
-          title="Uninitialized variable"
-          style={{
-            color: 'var(--text-4)',
-            fontStyle: 'italic',
-            borderBottom: '1px dashed var(--text-4)',
-          }}
-        >
+        <span title="Uninitialized" className={styles.uninit}>
           ?
         </span>
       );
     case 'fn':
-      return (
-        <span style={{ color: 'var(--syn-function)' }}>
-          &lt;fn {value.name}&gt;
-        </span>
-      );
+      return <span className={styles.fn}>&lt;fn {value.name}&gt;</span>;
   }
 };
 
@@ -63,80 +34,27 @@ export interface ValueCellProps {
 }
 
 export const ValueCell: React.FC<ValueCellProps> = ({ value, onHoverRef }) => {
-  if (value.k === 'ref') {
-    return (
-      <span
-        onMouseEnter={() => onHoverRef && onHoverRef(value.id)}
-        onMouseLeave={() => onHoverRef && onHoverRef(null)}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '4px',
-          padding: '1px 6px',
-          backgroundColor: 'var(--sem-ref-soft)',
-          border: '1px solid var(--sem-ref-line)',
-          borderRadius: 'var(--r-4)',
-          color: 'var(--sem-ref)',
-          fontSize: '11px',
-          fontFamily: 'var(--font-mono)',
-          cursor: 'pointer',
-        }}
-      >
-        <span
-          style={{
-            width: '6px',
-            height: '6px',
-            borderRadius: '50%',
-            backgroundColor: 'var(--sem-ref)',
-          }}
-        />
-        <span>ref({value.id})</span>
-      </span>
-    );
-  }
+  const showAddresses = usePrefsStore((s) => s.showAddresses);
 
-  if (value.k === 'ptr') {
+  if (value.k === 'ref' || value.k === 'ptr') {
+    const target = value.id;
+    const text =
+      value.k === 'ref' ? `ref ${value.id}` : !target ? 'nullptr' : showAddresses ? value.address : `→ ${target}`;
     return (
       <span
-        onMouseEnter={() => value.id && onHoverRef && onHoverRef(value.id)}
-        onMouseLeave={() => onHoverRef && onHoverRef(null)}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '4px',
-          padding: '1px 6px',
-          backgroundColor: 'var(--sem-ref-soft)',
-          border: '1px solid var(--sem-ref-line)',
-          borderRadius: 'var(--r-4)',
-          color: 'var(--sem-ref)',
-          fontSize: '11px',
-          fontFamily: 'var(--font-mono)',
-          cursor: value.id ? 'pointer' : 'default',
-        }}
+        className={cx(styles.ref, target && styles.linked)}
+        onMouseEnter={() => target && onHoverRef?.(target)}
+        onMouseLeave={() => onHoverRef?.(null)}
       >
-        <span style={{ fontWeight: 600 }}>*</span>
-        <span>{value.id ? `${value.address}` : 'nullptr'}</span>
+        {value.k === 'ptr' && <span className={styles.star}>*</span>}
+        {text}
       </span>
     );
   }
 
   if (value.k === 'inline') {
-    return (
-      <span
-        style={{
-          padding: '1px 6px',
-          backgroundColor: 'var(--bg-3)',
-          border: '1px solid var(--line-1)',
-          borderRadius: 'var(--r-4)',
-          color: 'var(--text-2)',
-          fontSize: '11px',
-        }}
-      >
-        inline({value.id})
-      </span>
-    );
+    return <span className={styles.inline}>inline {value.id}</span>;
   }
 
   return <PrimitiveValue value={value} />;
 };
-

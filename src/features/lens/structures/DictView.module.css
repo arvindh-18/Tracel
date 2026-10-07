@@ -1,0 +1,8 @@
+.grid {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  gap: var(--sp-4) var(--sp-8);
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+}

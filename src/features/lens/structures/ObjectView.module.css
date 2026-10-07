@@ -1,0 +1,26 @@
+.fields {
+  display: grid;
+  grid-template-columns: minmax(64px, max-content) 1fr;
+  gap: var(--sp-4) var(--sp-16);
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-title);
+}
+
+.value {
+  width: fit-content;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-cell);
+  transition: background-color var(--dur-tint) ease;
+}
+
+.changed {
+  background-color: var(--sem-update-soft);
+  transition: none;
+}
+
+.freed {
+  border-style: dashed;
+  border-color: var(--sem-remove-line);
+  color: var(--text-3);
+}
