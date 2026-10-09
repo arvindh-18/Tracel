@@ -6,6 +6,8 @@ import { CONTAINERS, Declarator, Expr, FunctionDef, Program, Stmt, StructDef, Ty
 export interface ExecOptions {
   stepLimit?: number;
   stdin?: string;
+  /** Called every few hundred steps with the step count so far. */
+  onProgress?: (steps: number) => void;
 }
 
 // ---- Runtime model ----
@@ -32,6 +34,7 @@ interface Block {
 
 type RV =
   | { t: 'int'; v: number }
+  | { t: 'long'; v: bigint } // long, long long, size_t: 64-bit
   | { t: 'float'; v: number }
   | { t: 'bool'; v: boolean }
   | { t: 'char'; v: number }
@@ -43,7 +46,7 @@ type RV =
   | { t: 'stream'; name: 'cout' | 'cin' | 'cerr' }
   | { t: 'manip'; name: string; arg?: number };
 
-type LV = { b: Block; i: number; name?: string } | { b: Block; f: string; name?: string } | { b: Block; whole: true; name?: string };
+type LV = { b: Block; i: number; name?: string; indexName?: string } | { b: Block; f: string; name?: string } | { b: Block; whole: true; name?: string };
 
 interface Scope {
   vars: Map<string, LV>;
@@ -56,6 +59,8 @@ interface CallFrame {
   line: number;
   scopes: Scope[];
   returnValue?: RV;
+  /** The object a member function runs on. */
+  self?: Block;
 }
 
 class RuntimeErr extends Error {
@@ -63,7 +68,8 @@ class RuntimeErr extends Error {
     public kind: string,
     public title: string,
     message: string,
-    public explanation: string = message
+    public explanation: string = message,
+    public context: { name: string; value: Value }[] = []
   ) {
     super(message);
   }
@@ -77,6 +83,7 @@ class LimitSignal {}
 
 const INT_TYPE: TypeInfo = { base: 'int', args: [], ptr: 0, ref: false };
 const isIntBase = (b: string) => ['int', 'short', 'long', 'long long', 'size_t'].includes(b);
+const isWideBase = (b: string) => b === 'long' || b === 'long long' || b === 'size_t';
 const isFloatBase = (b: string) => b === 'float' || b === 'double';
 
 function sizeOf(t: TypeInfo, structs: Map<string, StructDef>): number {
@@ -154,6 +161,7 @@ class Interpreter {
   private coutFixed = false;
   private coutPrecision = 6;
   private rngState = 1;
+  private onProgress?: (steps: number) => void;
 
   constructor(
     private program: Program,
@@ -162,6 +170,7 @@ class Interpreter {
     options: ExecOptions
   ) {
     this.stepLimit = options.stepLimit ?? 5000;
+    this.onProgress = options.onProgress;
     this.stdin = (options.stdin ?? '').split(/\s+/).filter(Boolean);
   }
 
@@ -204,7 +213,7 @@ class Interpreter {
           message: err.message,
           title: err.title,
           explanation: err.explanation,
-          context: [],
+          context: err.context,
           stateNote: 'The program stopped here, so the line that failed did not finish.',
         };
         this.record(line, 'exception', error);
@@ -220,13 +229,14 @@ class Interpreter {
     return this.stack.length ? this.stack[this.stack.length - 1]!.line : 1;
   }
 
-  private step(line: number) {
+  private step(line: number, range?: { from: number; to: number }) {
     if (this.stack.length) this.stack[this.stack.length - 1]!.line = line;
-    this.record(line, 'line');
+    this.record(line, 'line', undefined, range);
   }
 
-  private record(line: number, kind: RawStep['kind'], error?: TraceError) {
+  private record(line: number, kind: RawStep['kind'], error?: TraceError, range?: { from: number; to: number }) {
     if (this.steps.length >= this.stepLimit) throw new LimitSignal();
+    if (this.steps.length % 250 === 0 && this.steps.length) this.onProgress?.(this.steps.length);
     const frames: Frame[] = [];
     if (this.globals.vars.size) frames.push(this.snapshotFrame('globals', 'globals', 0, [this.globals]));
     for (const f of this.stack) {
@@ -246,6 +256,7 @@ class Interpreter {
     this.steps.push({
       line,
       kind,
+      range,
       frames,
       heap,
       stdoutLength: this.stdout.length,
@@ -276,6 +287,7 @@ class Interpreter {
   private toValue(rv: RV, ty: TypeInfo): Value {
     switch (rv.t) {
       case 'int':
+      case 'long':
         return { k: 'int', v: String(rv.v) };
       case 'float':
         return { k: 'float', v: rv.v };
@@ -323,7 +335,12 @@ class Interpreter {
         return {
           ...base,
           kind: 'array',
-          typeName: b.kind === 'scalar' ? elem : `${elem}[${b.items.length}]`,
+          typeName:
+            b.kind === 'scalar'
+              ? elem
+              : b.items[0]?.t === 'agg'
+                ? `${elem}[${b.items.length}][${b.items[0].b.items.length}]`
+                : `${elem}[${b.items.length}]`,
           items: b.items.map((v) => this.toValue(v, b.elemType)),
         };
     }
@@ -383,10 +400,8 @@ class Interpreter {
         let v: RV;
         if (f.init) v = this.coerce(this.evalR(f.init), f.type);
         else if (f.arraySize !== undefined) {
-          const n = f.arraySize ? this.toNum(this.evalR(f.arraySize)) : 0;
-          const arr = this.alloc('array', region, f.type, Array.from({ length: n }, () => this.makeDefault(f.type, region, owner, zero)));
-          owner?.push(arr);
-          v = { t: 'agg', b: arr };
+          const dims = [f.arraySize ? this.toNum(this.evalR(f.arraySize)) : 0, ...(f.innerDims ?? []).map((d) => this.toNum(this.evalR(d)))];
+          v = { t: 'agg', b: this.makeArray(f.type, dims, region, owner ?? [], zero) };
         } else v = this.makeDefault(f.type, region, owner, zero);
         b.fields.set(f.name, v);
       }
@@ -394,6 +409,18 @@ class Interpreter {
     }
     if (zero) return this.coerce({ t: 'int', v: 0 }, type);
     return { t: 'uninit', ty: type };
+  }
+
+  /** An array block; a 2-D array is an array of row blocks. */
+  private makeArray(elem: TypeInfo, dims: number[], region: Block['region'], owner: Block[], zero: boolean, label?: string): Block {
+    const [n, ...rest] = dims;
+    if (n! < 0) throw new RuntimeErr('BadAlloc', 'Invalid array size', `An array cannot have size ${n}.`);
+    const items: RV[] = Array.from({ length: n! }, () =>
+      rest.length ? { t: 'agg', b: this.makeArray(elem, rest, region, owner, zero) } : this.makeDefault(elem, region, owner, zero)
+    );
+    const b = this.alloc('array', region, elem, items, undefined, label);
+    owner.push(b);
+    return b;
   }
 
   private pointee(t: TypeInfo): TypeInfo {
@@ -423,7 +450,7 @@ class Interpreter {
       if (!lv.b.fields.has(lv.f)) throw new RuntimeErr('UnknownField', 'Unknown field', `'${lv.b.struct?.name}' has no field named '${lv.f}'.`);
       return lv.b.fields.get(lv.f)!;
     }
-    this.checkBounds(lv.b.items.length, lv.i, lv.name);
+    this.checkBounds(lv.b.items.length, lv.i, lv.name, lv.indexName);
     return lv.b.items[lv.i]!;
   }
 
@@ -440,7 +467,7 @@ class Interpreter {
       else lv.b.fields.set(lv.f, this.coerce(value, ty));
       return;
     }
-    this.checkBounds(lv.b.items.length, lv.i, lv.name);
+    this.checkBounds(lv.b.items.length, lv.i, lv.name, lv.indexName);
     const cur = lv.b.items[lv.i];
     if (cur?.t === 'agg') this.assignAgg(cur.b, value);
     else lv.b.items[lv.i] = this.coerce(value, lv.b.elemType);
@@ -468,16 +495,19 @@ class Interpreter {
     }
   }
 
-  private checkBounds(n: number, i: number, name?: string) {
+  private checkBounds(n: number, i: number, name?: string, indexName?: string) {
     if (i >= 0 && i < n) return;
     const label = name ? `'${name}'` : 'This array';
+    const context: { name: string; value: Value }[] = [];
+    if (indexName) context.push({ name: indexName, value: { k: 'int', v: String(i) } });
     throw new RuntimeErr(
       'OutOfBounds',
       'Index out of bounds',
       `OutOfBounds: index ${i} is out of bounds for ${label} of size ${n}.`,
       n === 0
         ? `${label} is empty, so there is no element at index ${i}.`
-        : `${label} has ${n} element${n === 1 ? '' : 's'} (indices 0 to ${n - 1}), but the program used index ${i}.`
+        : `${label} has ${n} element${n === 1 ? '' : 's'} (indices 0 to ${n - 1}), but the program used index ${i}.`,
+      context
     );
   }
 
@@ -495,7 +525,7 @@ class Interpreter {
   private evalL(e: Expr): LV {
     switch (e.type) {
       case 'Ident': {
-        const lv = this.lookup(e.name);
+        const lv = this.lookup(e.name) ?? this.memberOfSelf(e.name);
         if (!lv) throw new RuntimeErr('NameError', 'Unknown name', `'${e.name}' was not declared.`, `'${e.name}' is used here, but no variable with that name exists at this point.`);
         return { ...lv, name: e.name };
       }
@@ -503,8 +533,9 @@ class Interpreter {
         const obj = this.evalR(e.object);
         const i = this.toNum(this.evalR(e.index));
         const name = this.exprName(e.object);
-        if (obj.t === 'agg') return { b: obj.b, i, name };
-        if (obj.t === 'ptr') return { b: this.deref(obj, name), i: obj.o + i, name };
+        const indexName = e.index.type === 'Num' ? undefined : (this.exprName(e.index) ?? 'index');
+        if (obj.t === 'agg') return { b: obj.b, i, name, indexName };
+        if (obj.t === 'ptr') return { b: this.deref(obj, name), i: obj.o + i, name, indexName };
         if (obj.t === 'str') throw new RuntimeErr('Unsupported', 'Unsupported feature', "Changing a single character of a std::string isn't supported yet.");
         throw new RuntimeErr('TypeError', 'Not indexable', `${name ?? 'This value'} can't be indexed with [].`);
       }
@@ -541,9 +572,22 @@ class Interpreter {
     throw new RuntimeErr('TypeError', 'Not assignable', 'The left side of this assignment is not something that can be assigned to.');
   }
 
+  /** Inside a member function, a bare field name means this->field. */
+  private memberOfSelf(name: string): LV | undefined {
+    const self = this.stack[this.stack.length - 1]?.self;
+    if (self && !self.freed && self.fields.has(name)) return { b: self, f: name };
+    return undefined;
+  }
+
   private deref(p: RV & { t: 'ptr' }, name?: string): Block {
     if (!p.b) {
-      throw new RuntimeErr('NullDereference', 'Null pointer dereference', `${name ? `'${name}'` : 'This pointer'} is null, so there is nothing to read or write through it.`, 'The program followed a pointer that points to nothing (nullptr/NULL).');
+      throw new RuntimeErr(
+        'NullDereference',
+        'Null pointer dereference',
+        `${name ? `'${name}'` : 'This pointer'} is null, so there is nothing to read or write through it.`,
+        'The program followed a pointer that points to nothing (nullptr/NULL). Check that it was set before using it.',
+        name ? [{ name, value: { k: 'ptr', id: null, offset: 0, t: typeName(p.ty), address: '0x0' } }] : []
+      );
     }
     this.checkAlive(p.b, name);
     return p.b;
@@ -567,6 +611,8 @@ class Interpreter {
       case 'float':
       case 'char':
         return v.v;
+      case 'long':
+        return Number(v.v);
       case 'bool':
         return v.v ? 1 : 0;
       case 'uninit':
@@ -582,8 +628,14 @@ class Interpreter {
       'UninitializedRead',
       'Uninitialized variable',
       `${name ? `'${name}'` : 'A variable'} is used before it has been given a value.`,
-      `${name ? `'${name}'` : 'This variable'} was declared without a value, so reading it gives garbage. Give it a value first.`
+      `${name ? `'${name}'` : 'This variable'} was declared without a value, so reading it gives garbage. Give it a value first.`,
+      name ? [{ name, value: { k: 'uninit', t: '?' } }] : []
     );
+  }
+
+  private toBig(v: RV): bigint {
+    if (v.t === 'long') return v.v;
+    return BigInt(Math.trunc(this.toNum(v)));
   }
 
   private truthy(v: RV): boolean {
@@ -608,14 +660,22 @@ class Interpreter {
       return v;
     }
     if (v.t === 'str' || v.t === 'ptr') return v;
+    if (isWideBase(b)) {
+      const big = v.t === 'float' ? BigInt(Math.trunc(v.v)) : this.toBig(v);
+      return { t: 'long', v: ty.unsigned || b === 'size_t' ? BigInt.asUintN(64, big) : BigInt.asIntN(64, big) };
+    }
+    if (v.t === 'long' && (b === 'int' || b === 'short' || b === 'char' || b === 'bool')) {
+      const low = Number(BigInt.asIntN(32, v.v));
+      v = { t: 'int', v: low };
+    }
     const n = this.toNum(v);
     if (b === 'bool') return { t: 'bool', v: n !== 0 };
     if (b === 'char') return { t: 'char', v: ((Math.trunc(n) % 256) + 256) % 256 };
     if (isFloatBase(b)) return { t: 'float', v: b === 'float' ? Math.fround(n) : n };
     if (isIntBase(b)) {
       const t = Math.trunc(n);
-      if (b === 'int' || b === 'short') return { t: 'int', v: ty.unsigned ? t >>> 0 : t | 0 };
-      return { t: 'int', v: t };
+      if (b === 'short') return { t: 'int', v: ty.unsigned ? t & 0xffff : (t << 16) >> 16 };
+      return { t: 'int', v: ty.unsigned ? t >>> 0 : t | 0 };
     }
     return v;
   }
@@ -623,6 +683,7 @@ class Interpreter {
   private evalR(e: Expr): RV {
     switch (e.type) {
       case 'Num':
+        if (e.big) return { t: 'long', v: BigInt(e.big) };
         return e.float ? { t: 'float', v: e.value } : { t: 'int', v: e.value };
       case 'Str':
         return { t: 'str', v: e.value };
@@ -637,6 +698,8 @@ class Interpreter {
         if (['endl', 'fixed', 'boolalpha'].includes(e.name) && !this.lookup(e.name)) return { t: 'manip', name: e.name };
         if (e.name === 'INT_MAX') return { t: 'int', v: 2147483647 };
         if (e.name === 'INT_MIN') return { t: 'int', v: -2147483648 };
+        if (e.name === 'LLONG_MAX') return { t: 'long', v: 9223372036854775807n };
+        if (e.name === 'LLONG_MIN') return { t: 'long', v: -9223372036854775808n };
         const lv = this.evalL(e);
         const v = this.read(lv);
         if (v.t === 'uninit') throw this.uninitError(e.name);
@@ -727,16 +790,19 @@ class Interpreter {
         return { t: 'bool', v: !this.truthy(this.evalR(e.arg)) };
       case '-': {
         const v = this.evalR(e.arg);
+        if (v.t === 'long') return { t: 'long', v: BigInt.asIntN(64, -v.v) };
         return v.t === 'float' ? { t: 'float', v: -v.v } : { t: 'int', v: -this.toNum(v) | 0 };
       }
       case '+':
         return this.evalR(e.arg);
-      case '~':
-        return { t: 'int', v: ~this.toNum(this.evalR(e.arg)) };
+      case '~': {
+        const v = this.evalR(e.arg);
+        return v.t === 'long' ? { t: 'long', v: BigInt.asIntN(64, ~v.v) } : { t: 'int', v: ~this.toNum(v) };
+      }
       case 'sizeof': {
         const v = this.evalR(e.arg);
         if (v.t === 'agg' && v.b.kind === 'array') return { t: 'int', v: v.b.items.length * sizeOf(v.b.elemType, this.program.structs) };
-        if (v.t === 'float') return { t: 'int', v: 8 };
+        if (v.t === 'float' || v.t === 'long') return { t: 'int', v: 8 };
         if (v.t === 'char' || v.t === 'bool') return { t: 'int', v: 1 };
         if (v.t === 'ptr') return { t: 'int', v: 8 };
         return { t: 'int', v: 4 };
@@ -806,17 +872,20 @@ class Interpreter {
       throw new RuntimeErr('TypeError', 'Invalid string operation', `Can't use '${op}' with strings.`);
     }
 
+    const float = a.t === 'float' || b.t === 'float';
+    if (!float && (a.t === 'long' || b.t === 'long')) return this.arith64(op, this.toBig(a), this.toBig(b));
+
     const x = this.toNum(a);
     const y = this.toNum(b);
-    const float = a.t === 'float' || b.t === 'float';
-    const num = (v: number): RV => (float ? { t: 'float', v } : { t: 'int', v: Math.abs(v) > 2147483647 ? v : v | 0 });
+    // int arithmetic wraps at 32 bits, like the two's-complement hardware it models.
+    const num = (v: number): RV => (float ? { t: 'float', v } : { t: 'int', v: v | 0 });
     switch (op) {
       case '+':
         return num(x + y);
       case '-':
         return num(x - y);
       case '*':
-        return float ? num(x * y) : num(Math.abs(x * y) > 2 ** 53 ? Math.imul(x, y) : x * y);
+        return float ? num(x * y) : num(Math.imul(x, y));
       case '/':
         if (!float && y === 0) throw this.divError();
         return float ? num(x / y) : num(Math.trunc(x / y));
@@ -845,6 +914,48 @@ class Interpreter {
         return { t: 'int', v: x << y };
       case '>>':
         return { t: 'int', v: x >> y };
+    }
+    throw new RuntimeErr('TypeError', 'Unknown operator', `Unknown operator ${op}`);
+  }
+
+  /** long / long long arithmetic on BigInt, wrapping at 64 bits. */
+  private arith64(op: string, x: bigint, y: bigint): RV {
+    const wrap = (v: bigint): RV => ({ t: 'long', v: BigInt.asIntN(64, v) });
+    switch (op) {
+      case '+':
+        return wrap(x + y);
+      case '-':
+        return wrap(x - y);
+      case '*':
+        return wrap(x * y);
+      case '/':
+        if (y === 0n) throw this.divError();
+        return wrap(x / y); // BigInt division truncates toward zero, like C
+      case '%':
+        if (y === 0n) throw this.divError();
+        return wrap(x % y);
+      case '<':
+        return { t: 'bool', v: x < y };
+      case '>':
+        return { t: 'bool', v: x > y };
+      case '<=':
+        return { t: 'bool', v: x <= y };
+      case '>=':
+        return { t: 'bool', v: x >= y };
+      case '==':
+        return { t: 'bool', v: x === y };
+      case '!=':
+        return { t: 'bool', v: x !== y };
+      case '&':
+        return wrap(x & y);
+      case '|':
+        return wrap(x | y);
+      case '^':
+        return wrap(x ^ y);
+      case '<<':
+        return wrap(x << y);
+      case '>>':
+        return wrap(x >> y);
     }
     throw new RuntimeErr('TypeError', 'Unknown operator', `Unknown operator ${op}`);
   }
@@ -884,24 +995,34 @@ class Interpreter {
     }
     const def = this.program.structs.get(ty.base);
     if (def && !ty.ptr) {
-      const v = this.makeDefault(ty, 'heap', null) as RV & { t: 'agg' };
-      v.b.region = 'heap';
-      v.b.addr = this.nextHeap;
-      this.nextHeap += Math.max(16, Math.ceil(sizeOf(ty, this.program.structs) / 16) * 16);
-      if (e.args) this.fillFromList(v.b, e.args);
-      return { t: 'ptr', b: v.b, o: 0, ty };
+      const b = this.construct(def, e.args ?? [], 'heap', null, e.line);
+      return { t: 'ptr', b, o: 0, ty };
     }
     const init = e.args?.[0] ? this.coerce(this.evalR(e.args[0]), ty) : e.args ? this.makeDefault(ty, 'heap', null, true) : this.makeDefault(ty, 'heap', null);
     const b = this.alloc('scalar', 'heap', ty, [init]);
     return { t: 'ptr', b, o: 0, ty };
   }
 
+  /** Gives raw malloc/calloc bytes their type once a cast or typed pointer says what they hold. */
   private retype(b: Block, ty: TypeInfo) {
     const bytes = b.items.length;
+    const zero = b.items[0]?.t === 'int'; // calloc
     const n = Math.max(1, Math.floor(bytes / sizeOf(ty, this.program.structs)));
+    const def = !ty.ptr ? this.program.structs.get(ty.base) : undefined;
+    if (def && n === 1) {
+      // One struct: the block itself becomes the struct, so p->field works.
+      const fresh = (this.makeDefault(ty, 'heap', null, zero) as RV & { t: 'agg' }).b;
+      this.blocks.delete(fresh.id);
+      b.kind = 'struct';
+      b.struct = def;
+      b.elemType = ty;
+      b.items = [];
+      b.fields = fresh.fields;
+      return;
+    }
     b.elemType = ty;
     b.kind = 'array';
-    b.items = Array.from({ length: n }, () => (b.items[0]?.t === 'int' ? this.coerce({ t: 'int', v: 0 }, ty) : { t: 'uninit', ty }));
+    b.items = Array.from({ length: n }, () => (def ? this.makeDefault(ty, 'heap', null, zero) : zero ? this.coerce({ t: 'int', v: 0 }, ty) : { t: 'uninit', ty }));
   }
 
   /** Fills an array, struct or container from a { ... } list. */
@@ -924,6 +1045,18 @@ class Interpreter {
       });
       return;
     }
+    if (b.kind === 'array' && b.items[0]?.t === 'agg' && b.items[0].b.kind === 'array') {
+      // 2-D: {{1, 2}, {3, 4}} row by row, or {1, 2, 3, 4} filled in row-major order.
+      const rows = b.items.map((r) => (r as RV & { t: 'agg' }).b);
+      if (items.every((it) => it.type === 'InitList')) {
+        if (items.length > rows.length) throw new RuntimeErr('OutOfBounds', 'Too many initializers', `The list has ${items.length} rows but the array only has ${rows.length}.`);
+        rows.forEach((row, r) => this.fillFromList(row, items[r] ? (items[r] as Expr & { type: 'InitList' }).items : []));
+      } else {
+        const width = rows[0]!.items.length;
+        rows.forEach((row, r) => this.fillFromList(row, items.slice(r * width, (r + 1) * width)));
+      }
+      return;
+    }
     if (b.kind === 'array') {
       if (items.length > b.items.length) throw new RuntimeErr('OutOfBounds', 'Too many initializers', `The list has ${items.length} values but the array only has room for ${b.items.length}.`);
       for (let i = 0; i < b.items.length; i++) b.items[i] = i < items.length ? val(items[i]!, b.elemType) : this.makeDefault(b.elemType, b.region, null, true);
@@ -939,27 +1072,68 @@ class Interpreter {
     if (e.callee.type !== 'Ident') throw new RuntimeErr('TypeError', 'Not callable', 'This expression is not a function.');
     const name = e.callee.name;
     const fn = this.program.functions.get(name);
-    if (fn) {
-      const args = fn.params.map((p, i) => {
-        const a = e.args[i];
-        if (!a) throw new RuntimeErr('TypeError', 'Missing argument', `${name}() needs ${fn.params.length} arguments but got ${e.args.length}.`);
-        if (p.type.ref && this.isLValue(a)) return this.evalL(a);
-        return this.evalR(a);
-      });
-      if (e.args.length > fn.params.length) throw new RuntimeErr('TypeError', 'Too many arguments', `${name}() takes ${fn.params.length} arguments but got ${e.args.length}.`);
-      return this.callFunction(fn, args, e.line);
-    }
+    if (fn) return this.callFunction(fn, this.evalArgs(fn, e.args), e.line);
+    // Node(1, 2) or Node{1, 2}: a temporary object.
+    const def = this.program.structs.get(name);
+    if (def) return { t: 'agg', b: this.construct(def, e.args, 'stack', this.ownerList(), e.line) };
+    // Inside a member function, helper() means this->helper().
+    const self = this.stack[this.stack.length - 1]?.self;
+    const method = self?.struct ? this.findMethod(self.struct, name, e.args.length) : undefined;
+    if (method && self) return this.callFunction(method, this.evalArgs(method, e.args), e.line, self);
     return this.builtin(name, e.args);
   }
 
-  private callFunction(fn: FunctionDef, args: (RV | LV)[], callLine: number): RV {
+  private evalArgs(fn: FunctionDef, argExprs: Expr[]): (RV | LV)[] {
+    const label = fn.owner ? `${fn.owner}::${fn.name}` : fn.name;
+    if (argExprs.length > fn.params.length) {
+      throw new RuntimeErr('TypeError', 'Too many arguments', `${label}() takes ${fn.params.length} arguments but got ${argExprs.length}.`);
+    }
+    return fn.params.map((p, i) => {
+      const a = argExprs[i];
+      if (!a) throw new RuntimeErr('TypeError', 'Missing argument', `${label}() needs ${fn.params.length} arguments but got ${argExprs.length}.`);
+      if (p.type.ref && this.isLValue(a)) return this.evalL(a);
+      return this.evalR(a);
+    });
+  }
+
+  private findMethod(def: StructDef, name: string, arity: number): FunctionDef | undefined {
+    const list = def.methods.get(name);
+    return list?.find((m) => m.params.length === arity) ?? (list?.length === 1 ? list[0] : undefined);
+  }
+
+  /**
+   * Creates a struct/class object: default fields, then the matching
+   * constructor (with its initializer list), or aggregate initialization
+   * from the arguments when the type has no constructors.
+   */
+  private construct(def: StructDef, argExprs: Expr[], region: Block['region'], owner: Block[] | null, line: number): Block {
+    const b = (this.makeDefault({ ...INT_TYPE, base: def.name }, region, owner) as RV & { t: 'agg' }).b;
+    const ctors = def.methods.get(def.name);
+    if (ctors?.length) {
+      const ctor = ctors.find((c) => c.params.length === argExprs.length);
+      if (!ctor) {
+        throw new RuntimeErr('TypeError', 'No matching constructor', `${def.name} has no constructor that takes ${argExprs.length} argument${argExprs.length === 1 ? '' : 's'}.`);
+      }
+      this.callFunction(ctor, this.evalArgs(ctor, argExprs), line, b);
+    } else if (argExprs.length) {
+      this.fillFromList(b, argExprs);
+    }
+    return b;
+  }
+
+  private callFunction(fn: FunctionDef, args: (RV | LV)[], callLine: number, self?: Block): RV {
     if (this.stack.length >= 256) {
       throw new RuntimeErr('StackOverflow', 'Stack overflow', `Too many nested calls (over 256). ${fn.name}() keeps calling itself.`, 'The recursion never reached a base case, so calls kept piling up until the stack ran out of room.');
     }
     const caller = this.stack[this.stack.length - 1];
     if (caller) caller.line = callLine;
     const scope: Scope = { vars: new Map(), owned: [] };
-    const frame: CallFrame = { id: `f${this.stack.length}`, name: fn.name, line: fn.line, scopes: [scope] };
+    const frame: CallFrame = { id: `f${this.stack.length}`, name: fn.owner ? `${fn.owner}::${fn.name}` : fn.name, line: fn.line, scopes: [scope], self };
+    if (self) {
+      const thisCell = this.alloc('scalar', 'stack', { ...INT_TYPE, base: self.struct!.name, ptr: 1 }, [{ t: 'ptr', b: self, o: 0, ty: { ...INT_TYPE, base: self.struct!.name } }], undefined, 'this');
+      scope.owned.push(thisCell);
+      scope.vars.set('this', { b: thisCell, i: 0 });
+    }
 
     // Evaluate parameter storage before pushing, so it belongs to the callee.
     const bindings: [string, LV][] = fn.params.map((p, i) => {
@@ -981,6 +1155,7 @@ class Interpreter {
     let result: RV = { t: 'void' };
     this.record(fn.line, 'call');
     try {
+      for (const init of fn.inits ?? []) this.runInitializer(self!, init.name, init.args, fn.line);
       this.execBlockBody(fn.body.body, frame);
       frame.line = fn.body.endLine;
     } catch (sig) {
@@ -998,8 +1173,35 @@ class Interpreter {
     return result;
   }
 
+  /** One entry of a constructor initializer list: val(v) or child(nullptr). */
+  private runInitializer(self: Block, field: string, argExprs: Expr[], line: number) {
+    const slot = self.struct!.fields.find((f) => f.name === field);
+    if (!slot) throw new RuntimeErr('UnknownField', 'Unknown field', `'${self.struct!.name}' has no field named '${field}' to initialize.`);
+    const nested = !slot.type.ptr ? this.program.structs.get(slot.type.base) : undefined;
+    if (nested && slot.arraySize === undefined) {
+      const obj = this.construct(nested, argExprs, self.region, this.ownerList(), line);
+      self.fields.set(field, { t: 'agg', b: obj });
+      return;
+    }
+    const cur = self.fields.get(field);
+    if (cur?.t === 'agg' && argExprs.length > 1 && cur.b.kind === 'vector') {
+      const [n, fill] = argExprs.map((a) => this.evalR(a));
+      cur.b.items = Array.from({ length: this.toNum(n!) }, () => (fill ? this.coerce(fill, cur.b.elemType) : this.makeDefault(cur.b.elemType, 'heap', null, true)));
+      return;
+    }
+    if (argExprs.length) this.write({ b: self, f: field }, this.evalR(argExprs[0]!));
+  }
+
   private callMethod(m: Expr & { type: 'Member' }, argExprs: Expr[]): RV | LV {
-    const objV = this.evalR(m.object);
+    // User-defined member functions: obj.method() and ptr->method().
+    const target = m.arrow ? this.evalR(m.object) : this.evalR(m.object);
+    const objBlock = target.t === 'ptr' && m.arrow ? this.deref(target, this.exprName(m.object)) : target.t === 'agg' ? target.b : undefined;
+    if (objBlock?.kind === 'struct') {
+      const method = this.findMethod(objBlock.struct!, m.name, argExprs.length);
+      if (!method) throw new RuntimeErr('TypeError', 'Unknown method', `'${objBlock.struct!.name}' has no member function '${m.name}' that takes ${argExprs.length} argument${argExprs.length === 1 ? '' : 's'}.`);
+      return this.callFunction(method, this.evalArgs(method, argExprs), m.line, objBlock);
+    }
+    const objV = m.arrow && target.t === 'ptr' && objBlock ? ({ t: 'agg', b: objBlock } as RV) : target;
     const name = this.exprName(m.object);
     const args = () => argExprs.map((a) => this.evalR(a));
     if (objV.t === 'str') {
@@ -1250,8 +1452,10 @@ class Interpreter {
       switch (spec) {
         case 'd':
         case 'i':
+          s = v.t === 'long' ? String(v.v) : String(Math.trunc(this.toNum(v)));
+          break;
         case 'u':
-          s = String(Math.trunc(this.toNum(v)));
+          s = v.t === 'long' ? String(BigInt.asUintN(64, v.v)) : String(Math.trunc(this.toNum(v)) >>> 0);
           break;
         case 'f':
         case 'F':
@@ -1267,7 +1471,7 @@ class Interpreter {
           break;
         case 'x':
         case 'X':
-          s = (this.toNum(v) >>> 0).toString(16);
+          s = v.t === 'long' ? BigInt.asUintN(64, v.v).toString(16) : (this.toNum(v) >>> 0).toString(16);
           if (spec === 'X') s = s.toUpperCase();
           break;
         case 'o':
@@ -1337,6 +1541,7 @@ class Interpreter {
       case 'bool':
         return v.v ? '1' : '0';
       case 'int':
+      case 'long':
         return String(v.v);
       case 'float':
         return this.coutFixed ? v.v.toFixed(this.coutPrecision) : String(Number(v.v.toPrecision(this.coutPrecision || 1)));
@@ -1376,26 +1581,33 @@ class Interpreter {
       case 'Empty':
         return;
       case 'Decl':
-        this.step(s.line);
+        this.step(s.line, s.range);
         this.execDecl(s, frame.scopes[frame.scopes.length - 1]!, 'stack');
         return;
       case 'ExprStmt':
-        this.step(s.line);
+        this.step(s.line, s.range);
         this.evalR(s.expr);
         return;
       case 'Return':
-        this.step(s.line);
+        this.step(s.line, s.range);
         throw new ReturnSignal(s.value ? this.evalR(s.value) : { t: 'void' });
       case 'Break':
-        this.step(s.line);
+        this.step(s.line, s.range);
         throw new BreakSignal();
       case 'Continue':
-        this.step(s.line);
+        this.step(s.line, s.range);
         throw new ContinueSignal();
-      case 'Delete':
-        this.step(s.line);
-        this.free(this.evalR(s.arg), 'delete');
+      case 'Delete': {
+        this.step(s.line, s.range);
+        const p = this.evalR(s.arg);
+        // delete runs the destructor first, while the object is still alive.
+        if (p.t === 'ptr' && p.b && !p.b.freed && p.b.kind === 'struct') {
+          const dtor = this.findMethod(p.b.struct!, '~', 0);
+          if (dtor) this.callFunction(dtor, [], s.line, p.b);
+        }
+        this.free(p, 'delete');
         return;
+      }
       case 'If': {
         this.step(s.line);
         const taken = this.truthy(this.evalR(s.test));
@@ -1527,11 +1739,11 @@ class Interpreter {
     if (d.arraySize !== undefined) {
       const list = d.init?.type === 'InitList' ? d.init.items : null;
       const strInit = d.init?.type === 'Str' ? d.init.value : null;
-      const n = d.arraySize ? this.toNum(this.evalR(d.arraySize)) : list ? list.length : strInit !== null ? strInit.length + 1 : 0;
+      const inner = (d.innerDims ?? []).map((dim) => this.toNum(this.evalR(dim)));
+      const flatRows = list && inner.length && list.every((it) => it.type !== 'InitList') ? Math.ceil(list.length / inner[0]!) : undefined;
+      const n = d.arraySize ? this.toNum(this.evalR(d.arraySize)) : (flatRows ?? (list ? list.length : strInit !== null ? strInit.length + 1 : 0));
       if (n < 0) throw new RuntimeErr('BadAlloc', 'Invalid array size', `Array '${d.name}' cannot have size ${n}.`);
-      const items = Array.from({ length: n }, () => this.makeDefault(ty, region, scope.owned, zero));
-      const b = this.alloc('array', region, ty, items);
-      scope.owned.push(b);
+      const b = this.makeArray(ty, [n, ...inner], region, scope.owned, zero);
       if (list) this.fillFromList(b, list);
       else if (strInit !== null) [...strInit, '\0'].forEach((c, i) => i < n && (b.items[i] = { t: 'char', v: c.charCodeAt(0) }));
       scope.vars.set(d.name, { b, whole: true });
@@ -1546,7 +1758,11 @@ class Interpreter {
     if (!resolved.ptr && (CONTAINERS.has(resolved.base) || this.program.structs.has(resolved.base))) {
       let b: Block;
       if (init?.t === 'agg') b = this.copyAgg(init.b, region, scope.owned);
-      else {
+      else if (this.program.structs.get(resolved.base)?.methods.get(resolved.base)?.length) {
+        // A class with constructors: Point p; Point p(1, 2); Point p{1, 2};
+        const args = d.ctorArgs ?? (d.init?.type === 'InitList' ? d.init.items : []);
+        b = this.construct(this.program.structs.get(resolved.base)!, args, region, scope.owned, d.line);
+      } else {
         b = (this.makeDefault(resolved, region, scope.owned, zero) as RV & { t: 'agg' }).b;
         if (d.init?.type === 'InitList') this.fillFromList(b, d.init.items);
         else if (d.ctorArgs?.length) {
@@ -1578,6 +1794,8 @@ class Interpreter {
 
   private typeOfValue(v: RV): TypeInfo {
     switch (v.t) {
+      case 'long':
+        return { ...INT_TYPE, base: 'long long' };
       case 'float':
         return { ...INT_TYPE, base: 'double' };
       case 'bool':

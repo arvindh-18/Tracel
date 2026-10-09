@@ -9,6 +9,7 @@ import { QueueView } from './structures/QueueView';
 import { LinkedListView } from './structures/LinkedListView';
 import { DictView } from './structures/DictView';
 import { ObjectView } from './structures/ObjectView';
+import { GridView } from './structures/GridView';
 import { OutputSection } from './sections/Output';
 import { ErrorCard } from './sections/ErrorCard';
 import { EmptyState } from './sections/EmptyState';
@@ -81,6 +82,8 @@ export const LensPanel: React.FC = () => {
         return <DictView {...props} />;
       case 'object':
         return <ObjectView {...props} />;
+      case 'grid':
+        return <GridView {...props} allHeap={heap} />;
       default:
         return <ArrayView {...props} />;
     }

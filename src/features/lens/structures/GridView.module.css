@@ -1,0 +1,19 @@
+.scroll {
+  overflow-x: auto;
+  padding-bottom: var(--sp-4);
+}
+
+.grid {
+  border-collapse: separate;
+  border-spacing: var(--sp-4);
+}
+
+.grid th {
+  font-weight: normal;
+  text-align: center;
+  padding: 0 var(--sp-4);
+}
+
+.grid td {
+  padding: 0;
+}

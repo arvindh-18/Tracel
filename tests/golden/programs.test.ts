@@ -286,7 +286,7 @@ int main() {
 `;
     const trace = runClikeInterpreter(cSwap);
     expect(trace.status).toBe('completed');
-    expect(trace.steps.length).toBeGreaterThan(0);
+    expect(trace.stdout).toBe('7 3\n');
   });
 });
 

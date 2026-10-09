@@ -48,7 +48,9 @@ export function inferLensKind(
   obj: HeapObject,
   associatedVarName?: string,
   pragmas?: Map<string, LensKind>,
-  manualOverrides?: Map<string, LensKind>
+  manualOverrides?: Map<string, LensKind>,
+  /** Looks up other heap objects at the same step, for nested structures. */
+  resolve?: (id: string) => Pick<HeapObject, 'items'> | undefined
 ): LensKind {
   // 1. Manual override
   if (associatedVarName && manualOverrides?.has(associatedVarName)) {
@@ -69,9 +71,12 @@ export function inferLensKind(
   if (obj.kind === 'dict') return 'dict';
   if (obj.kind === 'set') return 'set';
 
-  // Check 2D grid: list of equal-length lists
-  if (obj.items && obj.items.length > 0 && obj.items.every((it) => it.k === 'ref' || it.k === 'inline')) {
-    // could be grid if nested items are lists
+  // 2-D grid: a list/array of equal-length lists/arrays of primitives.
+  if (resolve && obj.items && obj.items.length > 0 && obj.items.every((it) => it.k === 'ref' || it.k === 'inline')) {
+    const rows = obj.items.map((it) => resolve((it as { id: string }).id)?.items);
+    const width = rows[0]?.length ?? 0;
+    const primitive = (v: { k: string }) => v.k !== 'ref' && v.k !== 'inline' && v.k !== 'ptr';
+    if (width > 0 && rows.every((r) => r && r.length === width && r.every(primitive))) return 'grid';
   }
 
   // Check linked list / tree

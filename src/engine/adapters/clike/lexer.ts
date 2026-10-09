@@ -5,7 +5,17 @@ export interface Token {
   text: string;
   line: number;
   col: number;
+  /** Character offsets of the token in the source. */
+  pos: number;
+  end: number;
 }
+
+// Headers the interpreter provides. Anything else (including "local.h") is rejected up front.
+const KNOWN_HEADERS = new Set([
+  'stdio.h', 'stdlib.h', 'string.h', 'math.h', 'stdbool.h', 'limits.h', 'stddef.h', 'stdint.h', 'ctype.h', 'time.h',
+  'iostream', 'vector', 'stack', 'queue', 'string', 'algorithm', 'cmath', 'cstdio', 'cstdlib', 'cstring', 'climits',
+  'cstddef', 'cstdint', 'iomanip', 'utility', 'bits/stdc++.h',
+]);
 
 export class CompileError extends Error {
   constructor(
@@ -36,12 +46,13 @@ export function tokenize(source: string): Token[] {
   let lineStart = 0;
   let atLineStart = true;
 
+  let tokenStart = 0;
   const push = (kind: TokenKind, text: string, startLine: number, startCol: number) => {
     if (kind === 'id' && macros.has(text)) {
-      for (const m of macros.get(text)!) tokens.push({ ...m, line: startLine, col: startCol });
+      for (const m of macros.get(text)!) tokens.push({ ...m, line: startLine, col: startCol, pos: tokenStart, end: i });
       return;
     }
-    tokens.push({ kind, text, line: startLine, col: startCol });
+    tokens.push({ kind, text, line: startLine, col: startCol, pos: tokenStart, end: i });
   };
 
   while (i < source.length) {
@@ -67,6 +78,15 @@ export function tokenize(source: string): Token[] {
         else end++;
       }
       const directive = source.slice(i + 1, end).trim();
+      const include = directive.match(/^include\s*([<"])([^>"]+)[>"]/);
+      if (include) {
+        if (include[1] === '"') {
+          throw new CompileError(`Tracel runs a single file, so it can't include "${include[2]}". Put everything in this file.`, line, i - lineStart, 'unsupported');
+        }
+        if (!KNOWN_HEADERS.has(include[2]!.trim())) {
+          throw new CompileError(`Tracel doesn't provide <${include[2]}>. Supported headers include <stdio.h>, <stdlib.h>, <string.h>, <math.h>, <iostream>, <vector>, <stack>, <queue>, <string> and <algorithm>.`, line, i - lineStart, 'unsupported');
+        }
+      }
       const define = directive.match(/^define\s+([A-Za-z_]\w*)(?!\()\s*(.*)$/);
       if (define) {
         const body = tokenize(define[2]!.replace(/\/\/.*$/, '')).filter((t) => t.kind !== 'eof');
@@ -96,6 +116,7 @@ export function tokenize(source: string): Token[] {
 
     const col = i - lineStart;
     const start = i;
+    tokenStart = i;
 
     if (/[A-Za-z_]/.test(ch)) {
       while (i < source.length && /\w/.test(source[i]!)) i++;
@@ -147,6 +168,6 @@ export function tokenize(source: string): Token[] {
     push('op', op, line, col);
   }
 
-  tokens.push({ kind: 'eof', text: '', line, col: i - lineStart });
+  tokens.push({ kind: 'eof', text: '', line, col: i - lineStart, pos: i, end: i });
   return tokens;
 }

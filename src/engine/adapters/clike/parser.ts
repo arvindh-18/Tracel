@@ -22,7 +22,7 @@ export function typeName(t: TypeInfo): string {
 // ---- AST ----
 
 export type Expr =
-  | { type: 'Num'; line: number; value: number; float: boolean }
+  | { type: 'Num'; line: number; value: number; float: boolean; big?: string }
   | { type: 'Str'; line: number; value: string }
   | { type: 'Char'; line: number; value: number }
   | { type: 'Bool'; line: number; value: boolean }
@@ -47,12 +47,15 @@ export interface Declarator {
   name: string;
   type: TypeInfo;
   arraySize?: Expr | null; // null = "[]" (size from initializer)
+  innerDims?: Expr[]; // further dimensions: int grid[3][4] has arraySize 3, innerDims [4]
   init?: Expr;
   ctorArgs?: Expr[]; // vector<int> v(5, 0)
   line: number;
 }
 
-export type Stmt =
+export type Stmt = StmtNode & { range?: { from: number; to: number } };
+
+type StmtNode =
   | { type: 'Block'; line: number; body: Stmt[]; endLine: number }
   | { type: 'Decl'; line: number; decls: Declarator[] }
   | { type: 'ExprStmt'; line: number; expr: Expr }
@@ -79,11 +82,18 @@ export interface FunctionDef {
   params: Param[];
   body: Stmt & { type: 'Block' };
   line: number;
+  /** Member functions: the struct/class they belong to. */
+  owner?: string;
+  kind?: 'method' | 'ctor' | 'dtor';
+  /** Constructor initializer list: Node(int v) : val(v), next(nullptr) {} */
+  inits?: { name: string; args: Expr[] }[];
 }
 
 export interface StructDef {
   name: string;
-  fields: { name: string; type: TypeInfo; arraySize?: Expr | null; init?: Expr }[];
+  fields: { name: string; type: TypeInfo; arraySize?: Expr | null; innerDims?: Expr[]; init?: Expr }[];
+  /** Methods by name; the constructor is under the class name and the destructor under "~". */
+  methods: Map<string, FunctionDef[]>;
 }
 
 export interface Program {
@@ -96,12 +106,16 @@ export interface Program {
 
 const BASE_TYPES = new Set([
   'int', 'char', 'short', 'long', 'float', 'double', 'bool', 'void', 'unsigned', 'signed',
-  'auto', 'size_t', 'string',
+  'auto', 'size_t', 'string', 'long long',
 ]);
 const QUALIFIERS = new Set(['const', 'static', 'struct', 'inline', 'volatile', 'register', 'constexpr']);
 const UNSUPPORTED: Record<string, string> = {
   template: "Tracel's C++ engine doesn't support templates you define yourself yet. Built-in std::vector, std::stack and std::queue are supported.",
-  class: "Tracel's C++ engine doesn't support classes yet. Use a struct with fields (no member functions).",
+  virtual: "Tracel's C++ engine doesn't support virtual functions or inheritance yet.",
+  asm: "Tracel's C/C++ engine doesn't support inline assembly.",
+  __asm__: "Tracel's C/C++ engine doesn't support inline assembly.",
+  friend: "Tracel's C++ engine doesn't support friend declarations yet.",
+  namespace: "Tracel's C++ engine doesn't support defining your own namespaces yet.",
   goto: "Tracel's C/C++ engine does not support goto statements.",
   operator: "Tracel's C++ engine doesn't support operator overloading yet.",
   try: "Tracel's C++ engine doesn't support exceptions (try/catch) yet.",
@@ -241,9 +255,14 @@ class Parser {
     if (this.accept('[')) {
       d.arraySize = this.is(']') ? null : this.expr();
       this.expect(']');
-      if (this.is('[')) {
+      while (this.accept('[')) {
         const t = this.peek();
-        throw new CompileError("Tracel's C/C++ engine doesn't support multi-dimensional arrays yet. Try a vector of vectors.", t.line, t.col, 'unsupported');
+        if (this.is(']')) throw new CompileError('Only the first array dimension can be left empty.', t.line, t.col);
+        (d.innerDims ??= []).push(this.expr());
+        this.expect(']');
+      }
+      if (d.innerDims && d.innerDims.length > 1) {
+        throw new CompileError("Tracel's C/C++ engine supports arrays of up to two dimensions.", line, 0, 'unsupported');
       }
     }
     if (this.accept('=')) d.init = this.is('{') ? this.initList() : this.assignment();
@@ -276,18 +295,39 @@ class Parser {
         this.typedef();
         continue;
       }
-      if (this.is('struct') && this.peek(1).kind === 'id' && (this.is('{', 2) || this.is(';', 2))) {
-        this.next();
-        this.structBody(this.ident());
+      if ((this.is('struct') || this.is('class')) && this.peek(1).kind === 'id' && (this.is('{', 2) || this.is(';', 2) || this.is(':', 2))) {
+        const isClass = this.next().text === 'class';
+        const nameTok = this.peek();
+        const name = this.ident();
+        if (this.is(':')) {
+          throw new CompileError("Tracel's C++ engine doesn't support inheritance yet.", nameTok.line, nameTok.col, 'unsupported');
+        }
+        this.structBody(name, isClass);
         this.expect(';');
         continue;
       }
       const start = this.peek();
+      // Out-of-line constructor or destructor: Node::Node(...) { }  /  Node::~Node() { }
+      if (start.kind === 'id' && this.structs.has(start.text) && this.is('::', 1)) {
+        const owner = this.next().text;
+        this.expect('::');
+        const dtor = this.accept('~');
+        const name = this.ident();
+        this.memberDefinition(this.structs.get(owner)!, dtor ? '~' : name, { base: 'void', args: [], ptr: 0, ref: false }, start.line, dtor ? 'dtor' : 'ctor');
+        continue;
+      }
       if (!this.isTypeStart()) throw new CompileError(`Unexpected '${start.text}' at the top level`, start.line, start.col);
       const base = this.baseType();
       const save = this.pos;
       const retType = { ...base };
       this.pointerSuffix(retType);
+      // Out-of-line method: int Stack::top() { ... }
+      if (this.peek().kind === 'id' && this.structs.has(this.peek().text) && this.is('::', 1)) {
+        const def = this.structs.get(this.next().text)!;
+        this.expect('::');
+        this.memberDefinition(def, this.ident(), retType, start.line, 'method');
+        continue;
+      }
       if (this.peek().kind === 'id' && this.is('(', 1)) {
         const name = this.ident();
         const params = this.params();
@@ -319,23 +359,79 @@ class Parser {
     this.expect(';');
   }
 
-  private structBody(name: string) {
-    const def: StructDef = { name, fields: [] };
+  private structBody(name: string, isClass = false) {
+    const def: StructDef = this.structs.get(name) ?? { name, fields: [], methods: new Map() };
     this.structs.set(name, def); // registered first so fields can be Node*
     if (!this.accept('{')) return;
+    void isClass; // access control isn't enforced; public/private only matter to the compiler
     while (!this.accept('}')) {
-      this.checkUnsupported(this.peek());
+      const t = this.peek();
+      this.checkUnsupported(t);
+      if ((this.is('public') || this.is('private') || this.is('protected')) && this.is(':', 1)) {
+        this.pos += 2;
+        continue;
+      }
+      if (this.accept(';')) continue;
+      // Constructor or destructor
+      if ((t.kind === 'id' && t.text === name && this.is('(', 1)) || (this.is('~') && this.is(name, 1))) {
+        const dtor = this.accept('~');
+        this.next(); // the class name
+        this.memberDefinition(def, dtor ? '~' : name, { base: 'void', args: [], ptr: 0, ref: false }, t.line, dtor ? 'dtor' : 'ctor');
+        continue;
+      }
+      if (this.is('static')) {
+        throw new CompileError("Tracel's C++ engine doesn't support static members yet.", t.line, t.col, 'unsupported');
+      }
       const base = this.baseType();
+      // Method: type name(params) { body } or a prototype defined later.
+      const save = this.pos;
+      const retType = { ...base };
+      this.pointerSuffix(retType);
+      if (this.peek().kind === 'id' && this.is('(', 1)) {
+        const methodName = this.ident();
+        this.memberDefinition(def, methodName, retType, t.line, 'method');
+        continue;
+      }
+      this.pos = save;
       do {
         const d = this.declarator(base);
-        if (this.is('(') || d.ctorArgs) {
-          const t = this.peek();
-          throw new CompileError("Tracel's C++ engine doesn't support member functions or constructors yet. Use plain fields and set them after creating the struct.", t.line, t.col, 'unsupported');
+        if (this.is(':')) {
+          const c = this.peek();
+          throw new CompileError("Tracel's C/C++ engine doesn't support bit-fields.", c.line, c.col, 'unsupported');
         }
-        def.fields.push({ name: d.name, type: d.type, arraySize: d.arraySize, init: d.init });
+        def.fields.push({ name: d.name, type: d.type, arraySize: d.arraySize, innerDims: d.innerDims, init: d.init });
       } while (this.accept(','));
       this.expect(';');
     }
+  }
+
+  /** Parses a member's parameters, constructor initializers and body (or a prototype ending in ';'). */
+  private memberDefinition(def: StructDef, name: string, returnType: TypeInfo, line: number, kind: 'method' | 'ctor' | 'dtor') {
+    const params = this.params();
+    while (this.accept('const')) {
+      // const member function
+    }
+    let inits: { name: string; args: Expr[] }[] | undefined;
+    if (kind === 'ctor' && this.accept(':')) {
+      inits = [];
+      do {
+        const field = this.ident();
+        const close = this.is('{') ? '}' : ')';
+        this.next();
+        const args: Expr[] = [];
+        while (!this.accept(close)) {
+          if (args.length) this.expect(',');
+          args.push(this.assignment());
+        }
+        inits.push({ name: field, args });
+      } while (this.accept(','));
+    }
+    if (this.accept(';')) return; // declared here, defined out of line
+    const body = this.block();
+    const fn: FunctionDef = { name: kind === 'ctor' ? def.name : kind === 'dtor' ? `~${def.name}` : name, returnType, params, body, line, owner: def.name, kind, inits };
+    const list = def.methods.get(name) ?? [];
+    // An out-of-line definition replaces a prototype-only entry with the same arity.
+    def.methods.set(name, [...list.filter((m) => m.params.length !== params.length), fn]);
   }
 
   private params(): Param[] {
@@ -346,10 +442,13 @@ class Parser {
       if (params.length) this.expect(',');
       const type = this.fullType();
       const name = this.peek().kind === 'id' ? this.ident() : `arg${params.length}`;
-      if (this.accept('[')) {
+      // int a[] and int grid[][4] decay to a pointer to the first element (row).
+      let decays = false;
+      while (this.accept('[')) {
         while (!this.accept(']')) this.next();
-        type.ptr++;
+        decays = true;
       }
+      if (decays) type.ptr++;
       params.push({ name, type });
     }
     return params;
@@ -377,6 +476,13 @@ class Parser {
   }
 
   private statement(): Stmt {
+    const first = this.peek();
+    const stmt = this.statementNode();
+    stmt.range = { from: first.pos, to: this.tokens[this.pos - 1]!.end };
+    return stmt;
+  }
+
+  private statementNode(): Stmt {
     const t = this.peek();
     const line = t.line;
     this.checkUnsupported(t);
@@ -651,7 +757,10 @@ class Parser {
         const text = t.text.replace(/[uUlLfF]+$/, '');
         const isHex = /^0[xX]/.test(text);
         const float = !isHex && /[.eE]/.test(text);
-        return { type: 'Num', line, value: isHex ? parseInt(text, 16) : Number(text), float };
+        const value = isHex ? parseInt(text, 16) : Number(text);
+        // Integer literals past INT_MAX are 64-bit (long long); keep their exact digits.
+        const big = !float && value > 2147483647 ? BigInt(isHex ? parseInt(text, 16) : text).toString() : undefined;
+        return { type: 'Num', line, value, float, big };
       }
       case 'str': {
         let value = t.text;
@@ -664,6 +773,11 @@ class Parser {
         this.checkUnsupported(t);
         if (t.text === 'true' || t.text === 'false') return { type: 'Bool', line, value: t.text === 'true' };
         if (t.text === 'nullptr' || t.text === 'NULL') return { type: 'Null', line };
+        // Temporary object: Node{1, nullptr}
+        if (this.structs.has(t.text) && this.is('{')) {
+          const items = (this.initList() as Expr & { type: 'InitList' }).items;
+          return { type: 'Call', line, callee: { type: 'Ident', line, name: t.text }, args: items };
+        }
         if (t.text === 'std' && this.accept('::')) return this.primary();
         // Functional cast: int(x), double(total)
         if (BASE_TYPES.has(t.text) && this.is('(')) {

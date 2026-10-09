@@ -136,7 +136,7 @@ export function normalize(raw: RawTrace): Trace {
           }
           if (refVarName) break;
         }
-        lensHints[id] = inferLensKind(versionedObj, refVarName, pragmas);
+        lensHints[id] = inferLensKind(versionedObj, refVarName, pragmas, undefined, (hid) => rawStep.heap[hid]);
       }
     }
 

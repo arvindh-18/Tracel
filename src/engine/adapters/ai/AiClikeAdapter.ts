@@ -92,5 +92,6 @@ export class AiClikeAdapter implements LanguageAdapter {
 
   cancel(): void {
     this.controller?.abort();
+    this.interpreter.cancel();
   }
 }
