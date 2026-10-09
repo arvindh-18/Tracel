@@ -22,7 +22,7 @@ npm run check:contrast   # WCAG contrast check for both themes
 
 ## Languages and limits
 
-**Python** runs CPython 3.12 (Pyodide) in a Web Worker, traced with `sys.settrace`. Imports are limited to an allowlist (`math`, `random` seeded with 0, `collections`, `heapq`, `bisect`, `itertools`, `functools`, `string`, `typing`, `dataclasses`, and the `tracel` helper module). Network and file access are removed.
+**Python** runs CPython 3.12 (Pyodide) in a Web Worker, traced with `sys.settrace`. Your program may import only `math`, `random` (seeded with 0), `collections`, `heapq`, `bisect`, `itertools`, `functools`, `operator`, `string`, `re`, `dataclasses`, `typing`, `enum`, `copy`, `statistics`, `fractions`, `decimal`, `array`, `time` and the `tracel` helper module (`tracel.Stack`, `tracel.Queue`); anything else raises an `ImportError`. After Pyodide loads, the worker removes `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and `importScripts`.
 
 **C and C++** run on Tracel's own interpreter in the browser. It covers a subset: loops, functions and recursion, references, arrays, pointers and pointer arithmetic, structs, `malloc`/`free`, `new`/`delete`, `printf`/`scanf`, `std::cout`/`std::cin`, `std::string`, `std::vector`, `std::stack`, `std::queue`, `sort` and `swap`. Out-of-bounds access, null dereference, use-after-free, double free, uninitialized reads, division by zero, popping an empty container and runaway recursion stop the run on the offending line. Classes, templates, enums, exceptions and multi-dimensional arrays are not supported by the interpreter.
 

@@ -54,9 +54,12 @@ ALLOWED_MODULES = {
     'statistics', 'fractions', 'decimal', 'array', 'time', 'tracel',
 }
 _original_import = builtins.__import__
+# The globals dict the user's program runs in; set by run_tracel. Checking the
+# dict itself (not __name__) keeps the tracer's own imports unaffected.
+_USER_GLOBALS = [None]
 
 def _tracel_import(name, globals=None, locals=None, fromlist=(), level=0):
-    from_user_code = bool(globals) and globals.get('__name__') == '__main__'
+    from_user_code = globals is not None and globals is _USER_GLOBALS[0]
     if from_user_code and (level > 0 or name.split('.')[0] not in ALLOWED_MODULES):
         raise ImportError(
             f"Tracel's Python sandbox does not allow importing '{name}'. "
@@ -225,7 +228,7 @@ def run_tracel(source_code, stdin_text="", step_limit=5000):
 
         if isinstance(obj, dict):
             entries = []
-            for k, val in list(obj.items())[:50]:
+            for k, val in list(obj.items())[:100]:
                 entries.append([serialize_value(k, depth + 1), serialize_value(val, depth + 1)])
             return {
                 "id": hid,
@@ -320,9 +323,9 @@ def run_tracel(source_code, stdin_text="", step_limit=5000):
         id_to_obj = {heap_cache[k]: o for k, o in kept_alive.items()}
         # Breadth-first with a depth and count cap; the heap_objects check stops cycles.
         pending = [(ho, 0) for ho in heap_objects.values()]
-        while pending and len(heap_objects) < 200:
+        while pending and len(heap_objects) < 300:
             ho, depth = pending.pop(0)
-            if depth >= 50:
+            if depth >= 6:
                 continue
             refs = [v for v in ho.get("items", [])] + [v for _, v in ho.get("fields", [])]
             refs += [v for e in ho.get("entries", []) for v in e]
@@ -368,6 +371,7 @@ def run_tracel(source_code, stdin_text="", step_limit=5000):
 
     try:
         compiled = compile(source_code, "<tracel>", "exec")
+        _USER_GLOBALS[0] = code_globals
         sys.settrace(trace_hook)
         exec(compiled, code_globals)
         sys.settrace(None)
