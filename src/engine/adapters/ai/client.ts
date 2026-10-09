@@ -40,6 +40,8 @@ interface Call<T> {
   keyParts: unknown[];
   model?: string;
   signal?: AbortSignal;
+  /** Build scripts pass a key directly; the site always uses the visitor's stored key. */
+  apiKey?: string;
 }
 
 async function callGemini(apiKey: string, model: string, system: string, prompt: string, schema: Record<string, unknown>, temperature: number, signal: AbortSignal): Promise<string> {
@@ -90,7 +92,7 @@ function toAiError(err: unknown, timedOut: boolean): AiError {
 }
 
 export async function generate<T>(call: Call<T>): Promise<T> {
-  const apiKey = getApiKey();
+  const apiKey = call.apiKey ?? getApiKey();
   if (!apiKey) throw new AiError('no_key', NO_KEY_MESSAGE);
   const model = call.model ?? DEFAULT_AI_MODEL;
   const key = await cacheKey([model, call.feature, ...call.keyParts]);
@@ -165,7 +167,7 @@ export function simulate(
 }
 
 export function explain(
-  req: { language: 'python' | 'c' | 'cpp'; source: string; stdin?: string; digest: string[]; error?: string; model?: string },
+  req: { language: 'python' | 'c' | 'cpp'; source: string; stdin?: string; digest: string[]; error?: string; model?: string; apiKey?: string },
   signal?: AbortSignal
 ): Promise<ExplainResult> {
   checkSize(req.source);
@@ -178,6 +180,7 @@ export function explain(
     keyParts: [req.language, req.source, req.stdin ?? '', req.digest],
     model: req.model,
     signal,
+    apiKey: req.apiKey,
   });
 }
 

@@ -14,6 +14,9 @@ import { engineHost } from '../engine/host';
 import { RunCancelled } from '../engine/adapters/types';
 import { toast } from '../store/toasts';
 import { Toaster } from '../ui/Toaster';
+import { loadPrebuilt } from '../features/examples/prebuilt';
+import { readSharedProgram } from '../features/share/share';
+import { getApiKey } from '../engine/adapters/ai/keyStore';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { useApplyTheme } from './useTheme';
 import styles from './App.module.css';
@@ -73,6 +76,17 @@ export const App: React.FC = () => {
       }
 
       const { aiExplanations, aiModel } = usePrefsStore.getState();
+      // An unchanged built-in example has a prebuilt trace: no engine, no network.
+      const prebuilt = await loadPrebuilt(language, code, stdin);
+      const wantsAi = aiExplanations && getApiKey() !== null;
+      if (prebuilt && (!wantsAi || prebuilt.aiExplained) && runId === runIdRef.current) {
+        setRuntimeLoading(false);
+        setIsRunning(false);
+        setTrace(prebuilt);
+        restart();
+        play();
+        return;
+      }
       const trace = await engineHost.execute(language, code, stdin, stepLimit, {
         onProgress: (steps) => setRunProgress(steps),
         onStatus: (message) => runId === runIdRef.current && setRuntimeLoading(true, message),
@@ -103,6 +117,33 @@ export const App: React.FC = () => {
       });
     }
   }, [code, isRunning, language, play, restart, setError, setIsRunning, setRunProgress, setRuntimeLoading, setTrace, stdin, stepLimit]);
+
+  // Opening a share link restores its program; then any unchanged built-in
+  // example shows its prebuilt trace straight away, before anyone presses Run.
+  useEffect(() => {
+    const shared = readSharedProgram(window.location.hash);
+    if (!shared) return;
+    const session = useSessionStore.getState();
+    session.setLanguage(shared.language);
+    session.setCode(shared.code);
+    session.setStdin(shared.stdin);
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    if (isRunning) return;
+    loadPrebuilt(language, code, stdin).then((prebuilt) => {
+      const s = useSessionStore.getState();
+      if (!current || !prebuilt || s.isRunning || s.codeByLanguage[s.language] !== code || (s.trace && !s.isStale)) return;
+      setTrace(prebuilt);
+      restart();
+    });
+    return () => {
+      current = false;
+    };
+    // Only when the program itself changes; a finished run keeps its trace.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language, code]);
 
   const handleStop = useCallback(() => {
     runIdRef.current++; // any result still on its way is ignored

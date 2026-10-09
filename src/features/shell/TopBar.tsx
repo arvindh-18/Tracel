@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Square, HelpCircle, Settings, Info, ChevronDown, Monitor, Sun, Moon } from 'lucide-react';
+import { Play, Square, HelpCircle, Settings, Info, ChevronDown, Monitor, Sun, Moon, Link2 } from 'lucide-react';
 import { useSessionStore, SupportedLanguage } from '../../store/session';
 import { usePrefsStore, ThemePref } from '../../store/prefs';
 import { Button } from '../../ui/Button';
@@ -7,6 +7,8 @@ import { IconButton } from '../../ui/IconButton';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { Popover, MenuGroup, MenuItem } from '../../ui/Popover';
 import { EXAMPLES, Example } from '../examples/registry';
+import { shareUrl } from '../share/share';
+import { toast } from '../../store/toasts';
 import styles from './TopBar.module.css';
 
 export interface TopBarProps {
@@ -153,6 +155,21 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
           )}
         </Popover>
 
+        <IconButton
+          icon={<Link2 size={16} />}
+          label="Copy a share link to this program"
+          onClick={async () => {
+            const { language: lang, codeByLanguage, stdin } = useSessionStore.getState();
+            const url = shareUrl({ language: lang, code: codeByLanguage[lang], stdin });
+            window.history.replaceState(null, '', url);
+            try {
+              await navigator.clipboard.writeText(url);
+              toast('Share link copied. The code travels in the link itself; nothing is uploaded.');
+            } catch {
+              toast('Share link is in the address bar; copy it from there.');
+            }
+          }}
+        />
         <IconButton icon={<HelpCircle size={16} />} label="Keyboard shortcuts (?)" onClick={onOpenShortcuts} />
         <IconButton
           icon={THEME_ICON[theme]}
