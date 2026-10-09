@@ -50,3 +50,49 @@
   accent-color: var(--exec);
   cursor: pointer;
 }
+
+.keyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding-bottom: var(--sp-12);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.keyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+.keyInput {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-control-sm, 28px);
+  padding: 0 var(--sp-8);
+  color: var(--text-1);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-control);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+}
+
+.keySaved {
+  flex: 1;
+  color: var(--text-2);
+  font-size: var(--fs-title);
+}
+
+.notice {
+  padding: var(--sp-8);
+  color: var(--text-2);
+  background-color: var(--bg-hover);
+  border-radius: var(--r-cell);
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+}
+
+.hint a {
+  color: var(--exec);
+}

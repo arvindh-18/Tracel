@@ -1,3 +1,4 @@
+import { DEFAULT_AI_MODEL } from '../engine/adapters/ai/config';
 import { create } from 'zustand';
 
 export type ThemePref = 'system' | 'light' | 'dark';
@@ -15,23 +16,21 @@ function readStoredTheme(): ThemePref {
   return 'system';
 }
 
-export type AiSimulateMode = 'auto' | 'never' | 'always';
-
 const AI_PREFS_KEY = 'tracel:ai-prefs';
 
 interface AiPrefs {
   aiExplanations: boolean;
-  aiSimulate: AiSimulateMode;
+  aiModel: string;
   aiStepLimit: number;
 }
 
 function readAiPrefs(): AiPrefs {
-  const defaults: AiPrefs = { aiExplanations: false, aiSimulate: 'auto', aiStepLimit: 500 };
+  const defaults: AiPrefs = { aiExplanations: true, aiModel: DEFAULT_AI_MODEL, aiStepLimit: 500 };
   try {
     const stored = JSON.parse(localStorage.getItem(AI_PREFS_KEY) ?? '{}') as Partial<AiPrefs>;
     return {
       aiExplanations: typeof stored.aiExplanations === 'boolean' ? stored.aiExplanations : defaults.aiExplanations,
-      aiSimulate: stored.aiSimulate === 'never' || stored.aiSimulate === 'always' ? stored.aiSimulate : defaults.aiSimulate,
+      aiModel: typeof stored.aiModel === 'string' && stored.aiModel ? stored.aiModel : defaults.aiModel,
       aiStepLimit: typeof stored.aiStepLimit === 'number' ? stored.aiStepLimit : defaults.aiStepLimit,
     };
   } catch {
@@ -45,10 +44,10 @@ export interface PrefsState {
   reducedMotion: boolean;
   showAddresses: boolean;
   stepLimit: number;
-  /** Gemini narration, lens choices and error explanations on top of the real trace. */
+  /** With a Gemini key: narration, an overview and lens choices after each run. */
   aiExplanations: boolean;
-  /** C/C++: auto = interpreter, with Gemini for features it can't run. */
-  aiSimulate: AiSimulateMode;
+  aiModel: string;
+  /** Cap on steps when Gemini simulates an unsupported C++ program. */
   aiStepLimit: number;
 
   setTheme: (theme: ThemePref) => void;
@@ -81,9 +80,9 @@ export const usePrefsStore = create<PrefsState>((set, get) => ({
   setStepLimit: (stepLimit) => set({ stepLimit }),
   setAiPrefs: (prefs) => {
     set(prefs);
-    const { aiExplanations, aiSimulate, aiStepLimit } = get();
+    const { aiExplanations, aiModel, aiStepLimit } = get();
     try {
-      localStorage.setItem(AI_PREFS_KEY, JSON.stringify({ aiExplanations, aiSimulate, aiStepLimit }));
+      localStorage.setItem(AI_PREFS_KEY, JSON.stringify({ aiExplanations, aiModel, aiStepLimit }));
     } catch {
       // Applies for this session only.
     }

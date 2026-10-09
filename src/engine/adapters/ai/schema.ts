@@ -56,11 +56,17 @@ export const SimulateResult = z.object({
 export type SimulateResult = z.infer<typeof SimulateResult>;
 
 export const ExplainResult = z.object({
-  narrations: z.array(z.string()).describe('one sentence per step, same order and count as the digest'),
+  overview: z.string().describe('2-3 sentences: what the whole program does'),
+  narrations: z.array(z.string()).describe('one sentence per step, same order and count as the digest, at most 90 characters'),
   lensHints: z.array(z.object({ name: z.string(), lens: z.enum(LENSES) })).optional(),
-  errorExplanation: z.string().optional(),
 });
 export type ExplainResult = z.infer<typeof ExplainResult>;
+
+export const ErrorHelp = z.object({
+  explanation: z.string().describe('what went wrong and why, in plain words, 2-4 sentences'),
+  fix: z.string().describe('a suggested fix: what to change, with a short corrected snippet if useful'),
+});
+export type ErrorHelp = z.infer<typeof ErrorHelp>;
 
 /** JSON Schema for Gemini's structured output, without the keywords it rejects. */
 export function geminiSchema(schema: z.ZodType): Record<string, unknown> {

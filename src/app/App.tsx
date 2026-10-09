@@ -12,6 +12,8 @@ import { usePlaybackStore, PlaybackSpeed } from '../store/playback';
 import { usePrefsStore } from '../store/prefs';
 import { engineHost } from '../engine/host';
 import { RunCancelled } from '../engine/adapters/types';
+import { toast } from '../store/toasts';
+import { Toaster } from '../ui/Toaster';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { useApplyTheme } from './useTheme';
 import styles from './App.module.css';
@@ -70,14 +72,14 @@ export const App: React.FC = () => {
         setRuntimeLoading(true, 'Preparing Python runtime…');
       }
 
-      const { aiExplanations, aiSimulate, aiStepLimit } = usePrefsStore.getState();
+      const { aiExplanations, aiModel } = usePrefsStore.getState();
       const trace = await engineHost.execute(language, code, stdin, stepLimit, {
         onProgress: (steps) => setRunProgress(steps),
         onStatus: (message) => runId === runIdRef.current && setRuntimeLoading(true, message),
         aiExplanations,
-        aiSimulate,
-        aiStepLimit,
+        aiModel,
       });
+      if (trace.aiNotice) toast(trace.aiNotice, 'error');
       if (runId !== runIdRef.current) return; // stopped while running
 
       setRuntimeLoading(false);
@@ -224,6 +226,7 @@ export const App: React.FC = () => {
 
       <ShortcutsSheet isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <Toaster />
     </div>
     </MotionConfig>
   );

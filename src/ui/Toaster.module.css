@@ -1,0 +1,44 @@
+.region {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  max-width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-control);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  color: var(--text-1);
+  font-size: var(--fs-title);
+  line-height: 1.45;
+  pointer-events: auto;
+}
+
+.error {
+  border-left: 3px solid var(--sem-remove);
+}
+
+.close {
+  margin-left: auto;
+  padding: 2px;
+  color: var(--text-2);
+  background: none;
+  border: 0;
+  border-radius: var(--r-cell);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-1);
+}

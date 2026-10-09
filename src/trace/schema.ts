@@ -131,8 +131,10 @@ export interface Trace {
   engine: 'native' | 'ai';
   /** Set when AI explanations were merged into narration, lens hints or the error. */
   aiExplained?: boolean;
-  /** Why the AI explanation pass didn't apply, shown quietly in the UI. */
+  /** Why the AI explanation pass didn't apply; shown as a toast. */
   aiNotice?: string;
+  /** Gemini's 2-3 sentence summary of what the program does. */
+  aiOverview?: string;
 }
 
 export interface ViewState {

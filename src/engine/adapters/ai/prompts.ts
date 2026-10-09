@@ -89,12 +89,18 @@ EXAMPLE 2 (C++)
 {"line":12,"narration":"main returns 0","ops":[{"op":"return","value":{"k":"int","v":"0"}}]}
 ],"lensHints":[{"name":"s","lens":"stack"}]}`;
 
-export const EXPLAIN_SYSTEM_PROMPT = `You explain a program's execution to a beginner. You are given the source and a digest of its real, already-recorded trace: one line per step with the line number and the variables that changed. The trace is exact; never contradict or change it.
+export const EXPLAIN_SYSTEM_PROMPT = `You explain a program's execution to a beginner. You are given the source and a digest of its real, already-recorded trace: one line per step with the line number and what changed. The trace is exact; never contradict or change it.
 
-Return JSON: { "narrations": [...], "lensHints": [...], "errorExplanation"? }
-- "narrations": exactly one sentence per digest step, same order and count, each at most 80 characters, saying what that step did and why it matters ("i moves to 2; the loop checks arr[2] next").
-- "lensHints": optional [{"name","lens"}] for variables whose data structure is best drawn as array, stack, queue, linked_list, tree, grid, dict or object.
-- "errorExplanation": only if the trace ends in an error: two or three plain sentences on what went wrong and how to fix it.`;
+Return JSON: { "overview", "narrations": [...], "lensHints": [...] }
+- "overview": 2-3 sentences on what the whole program does and how.
+- "narrations": exactly one sentence per digest step, same order and count, each at most 90 characters. Explain why, not just what: "p now points to arr[2] because p++ moved it one int forward".
+- "lensHints": optional [{"name","lens"}] for variables whose data structure is best drawn as array, stack, queue, linked_list, tree, grid, dict or object.`;
+
+export const ERROR_SYSTEM_PROMPT = `You help a beginner understand why their program stopped with an error. You get the source, the error Tracel detected (it is real: the program was actually run), the line, and the variables involved.
+
+Return JSON: { "explanation", "fix" }
+- "explanation": 2-4 plain sentences on what went wrong and why, pointing at the exact line and values.
+- "fix": what to change, with a short corrected snippet when it helps. Do not rewrite the whole program.`;
 
 export function numberedSource(source: string): string {
   return source
@@ -121,5 +127,16 @@ export function explainPrompt(req: { language: string; source: string; digest: s
     `Trace digest (${req.digest.length} steps):`,
     ...req.digest,
     ...(req.error ? [`The run ended with this error: ${req.error}`] : []),
+  ].join('\n');
+}
+
+export function errorPrompt(req: { language: string; source: string; error: { kind: string; title: string; message: string; line: number }; context: string[] }): string {
+  return [
+    `Language: ${req.language}`,
+    'Source:',
+    numberedSource(req.source),
+    `Error on line ${req.error.line}: ${req.error.title} (${req.error.kind})`,
+    `Message: ${req.error.message}`,
+    ...(req.context.length ? ['Variables involved:', ...req.context] : []),
   ].join('\n');
 }

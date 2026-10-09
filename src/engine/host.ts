@@ -1,29 +1,30 @@
 import { LanguageAdapter, RunCancelled, RunRequest } from './adapters/types';
 import { PythonAdapter } from './adapters/python/PythonAdapter';
-import { AiClikeAdapter } from './adapters/ai/AiClikeAdapter';
-import { AiError, explain } from './adapters/ai/client';
+import { ClikeAdapter } from './adapters/clike/ClikeAdapter';
+import { AiError, explain, simulate } from './adapters/ai/client';
+import { DEFAULT_AI_STEP_LIMIT } from './adapters/ai/config';
 import { applyNarrations, lensHintsById, mergeExplanation, traceDigest } from './adapters/ai/explainMerge';
-import { RawTrace, normalize } from '../trace/normalize';
+import { getApiKey } from './adapters/ai/keyStore';
+import { replay } from './adapters/ai/replay';
+import { normalize } from '../trace/normalize';
 import { Trace } from '../trace/schema';
 
 export interface ExecuteOptions {
   onProgress?: (steps: number) => void;
   onStatus?: (message: string) => void;
-  /** Add Gemini narration, lens choices and error explanations to the real trace. */
+  /** Add Gemini narration, an overview and lens choices to the real trace (needs a key). */
   aiExplanations?: boolean;
-  /** C/C++: when Gemini simulates instead of the interpreter. */
-  aiSimulate?: 'auto' | 'always' | 'never';
-  aiStepLimit?: number;
+  aiModel?: string;
 }
 
 class EngineHost {
   private adapters = new Map<string, LanguageAdapter>();
-  private explainController: AbortController | null = null;
+  private aiController: AbortController | null = null;
 
   constructor() {
     this.adapters.set('python', new PythonAdapter());
-    this.adapters.set('c', new AiClikeAdapter('c'));
-    this.adapters.set('cpp', new AiClikeAdapter('cpp'));
+    this.adapters.set('c', new ClikeAdapter('c'));
+    this.adapters.set('cpp', new ClikeAdapter('cpp'));
   }
 
   getAdapter(lang: 'python' | 'c' | 'cpp'): LanguageAdapter {
@@ -34,6 +35,7 @@ class EngineHost {
     return adapter;
   }
 
+  /** Runs the program on its real engine; AI only adds explanations afterwards. */
   async execute(
     lang: 'python' | 'c' | 'cpp',
     source: string,
@@ -43,51 +45,55 @@ class EngineHost {
   ): Promise<Trace> {
     const adapter = this.getAdapter(lang);
     await adapter.prepare();
-
-    const req: RunRequest = {
-      source,
-      stdin,
-      stepLimit,
-      onStatus: options.onStatus,
-      ai: { simulate: options.aiSimulate ?? 'auto', stepLimit: options.aiStepLimit ?? 500 },
-    };
-    const rawTrace: RawTrace = await adapter.run(req, options.onProgress);
-
-    let trace = normalize(rawTrace);
-    if (rawTrace.engine === 'ai') {
-      // A simulated trace carries the model's own narration and lens choices.
-      if (rawTrace.aiNarrations) applyNarrations(trace, rawTrace.aiNarrations);
-      if (rawTrace.aiLensHints) Object.assign(trace.lensHints, lensHintsById(trace, rawTrace.aiLensHints));
-      return trace;
-    }
-    if (options.aiExplanations) trace = await this.explain(trace, options.onStatus);
+    const req: RunRequest = { source, stdin, stepLimit, onStatus: options.onStatus };
+    const trace = normalize(await adapter.run(req, options.onProgress));
+    if (options.aiExplanations && getApiKey()) return this.explain(trace, stdin, options);
     return trace;
   }
 
-  /** The explain pass is best effort: any failure keeps the real trace and notes why. */
-  private async explain(trace: Trace, onStatus?: (message: string) => void): Promise<Trace> {
+  /**
+   * Has Gemini simulate a C/C++ program the interpreter can't run. The model
+   * describes operations; replay() checks them and builds the trace.
+   */
+  async simulateWithAi(lang: 'c' | 'cpp', source: string, stdin = '', options: { stepLimit?: number; aiModel?: string } = {}): Promise<Trace> {
+    const stepLimit = options.stepLimit ?? DEFAULT_AI_STEP_LIMIT;
+    this.aiController = new AbortController();
+    try {
+      const result = await simulate({ language: lang, source, stdin, stepLimit, model: options.aiModel }, this.aiController.signal);
+      const replayed = replay(result, { language: lang, source, stdin, stepLimit });
+      const trace = normalize({ ...replayed.rawTrace, engine: 'ai' });
+      applyNarrations(trace, replayed.narrations);
+      Object.assign(trace.lensHints, lensHintsById(trace, replayed.lensHints));
+      return trace;
+    } finally {
+      this.aiController = null;
+    }
+  }
+
+  /** Best effort: any failure keeps the real trace and says why in aiNotice. */
+  private async explain(trace: Trace, stdin: string, options: ExecuteOptions): Promise<Trace> {
     const digest = traceDigest(trace);
     if (!digest) {
       return trace.steps.length ? { ...trace, aiNotice: 'AI explanations skip traces longer than 400 steps.' } : trace;
     }
-    onStatus?.('Adding AI explanations…');
-    this.explainController = new AbortController();
+    options.onStatus?.('Adding AI explanations…');
+    this.aiController = new AbortController();
     try {
       const result = await explain(
-        { language: trace.language, source: trace.source, digest, error: trace.error?.message },
-        this.explainController.signal
+        { language: trace.language, source: trace.source, stdin, digest, error: trace.error?.message, model: options.aiModel },
+        this.aiController.signal
       );
       return mergeExplanation(trace, result);
     } catch (err) {
       if (err instanceof RunCancelled) throw err;
       return { ...trace, aiNotice: err instanceof AiError ? err.message : 'AI explanations failed for this run.' };
     } finally {
-      this.explainController = null;
+      this.aiController = null;
     }
   }
 
   cancel(lang: 'python' | 'c' | 'cpp') {
-    this.explainController?.abort();
+    this.aiController?.abort();
     this.getAdapter(lang).cancel?.();
   }
 }

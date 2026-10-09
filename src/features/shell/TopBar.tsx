@@ -127,7 +127,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
               aria-expanded={infoOpen}
               onClick={() => setInfoOpen((o) => !o)}
             >
-              <span className={styles.runtimeLabel}>{aiSimulated ? 'AI-simulated (Gemini)' : ENGINE_LABEL[language]}</span>
+              <span className={styles.runtimeLabel}>{aiSimulated ? 'AI-simulated' : ENGINE_LABEL[language]}</span>
               <Info size={14} aria-label="Runtime details" />
             </Button>
           }
@@ -145,10 +145,9 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
               <h3 className={styles.infoTitle}>C and C++ subset</h3>
               <p>Interprets the program with real pointer arithmetic, typed memory blocks and safety checks.</p>
               <p className={styles.infoMeta}>
-                Supports arrays, pointers, structs, std::vector, std::stack, std::queue, printf/scanf and std::cout/cin.
-                Undefined behaviour stops the run with the exact line. Programs using features it can't run (classes,
-                templates, enums) are simulated by Gemini when an API key is set up; those traces can occasionally be
-                wrong.
+                Supports arrays (1-D and 2-D), pointers, structs and classes, std::vector, std::stack, std::queue, printf/scanf and std::cout/cin.
+                Undefined behaviour stops the run with the exact line. For features it can't run (templates, inheritance),
+                you can ask Gemini to simulate the program with your own key; those traces are marked AI-simulated.
               </p>
             </>
           )}

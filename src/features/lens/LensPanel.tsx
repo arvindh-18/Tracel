@@ -93,10 +93,14 @@ export const LensPanel: React.FC = () => {
     <div className={styles.panel}>
       {trace.engine === 'ai' && (
         <p className={styles.notice}>
-          <strong>AI-simulated (Gemini).</strong> Gemini traced this program instead of Tracel's interpreter. AI traces can occasionally be wrong.
+          <strong>AI-simulated.</strong> Tracel's interpreter can't run this program, so Gemini traced it. AI traces can be inaccurate.
         </p>
       )}
-      {trace.aiNotice && <p className={styles.notice}>{trace.aiNotice}</p>}
+      {trace.aiOverview && (
+        <p className={styles.notice}>
+          <strong>Overview.</strong> {trace.aiOverview}
+        </p>
+      )}
       {activeError && <ErrorCard error={activeError} />}
 
       {frames.length > 0 && <FramesSection frames={frames} events={events} onHoverRef={setHoveredRefId} />}

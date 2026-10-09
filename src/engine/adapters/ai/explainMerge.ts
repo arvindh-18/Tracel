@@ -4,7 +4,7 @@ import { ExplainResult } from './schema';
 // The explain pass never changes state: it only replaces narration (when the
 // step counts match), adds lens hints and rewrites the error explanation.
 
-export const MAX_DIGEST_STEPS = 400;
+import { MAX_DIGEST_STEPS } from './config';
 
 function short(v: Value): string {
   switch (v.k) {
@@ -92,7 +92,7 @@ export function applyNarrations(trace: Trace, narrations: (string | undefined)[]
   if (narrations.length !== trace.steps.length) return false;
   trace.steps.forEach((step, i) => {
     const text = narrations[i]?.trim();
-    if (text) step.narration = text.length > 100 ? text.slice(0, 97) + '...' : text;
+    if (text) step.narration = text.length > 120 ? text.slice(0, 117) + '...' : text;
   });
   return true;
 }
@@ -109,9 +109,7 @@ export function mergeExplanation(trace: Trace, result: ExplainResult): Trace {
     const byName = Object.fromEntries(result.lensHints.map((h) => [h.name, h.lens]));
     Object.assign(merged.lensHints, lensHintsById(merged, byName));
   }
-  if (result.errorExplanation && merged.error) {
-    merged.error = { ...merged.error, explanation: result.errorExplanation };
-  }
+  merged.aiOverview = result.overview.trim() || undefined;
   if (!applied) merged.aiNotice = 'AI narration skipped: it did not match the trace step for step.';
   return merged;
 }
