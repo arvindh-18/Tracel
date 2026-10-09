@@ -27,6 +27,16 @@ async function getPyodide(): Promise<any> {
 
   // Run initial tracer module setup
   await pyodideInstance.runPythonAsync(PYTHON_TRACER_CODE);
+
+  // Pyodide is loaded; user programs get no network or script loading.
+  for (const name of ['fetch', 'XMLHttpRequest', 'WebSocket', 'importScripts', 'EventSource']) {
+    try {
+      delete self[name];
+    } catch {
+      // Non-configurable on some engines; shadow it instead.
+    }
+    if (name in self) Object.defineProperty(self, name, { value: undefined, configurable: false, writable: false });
+  }
   isInitializing = false;
   self.postMessage({ type: 'status', message: 'Pyodide ready' });
 

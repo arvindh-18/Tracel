@@ -45,6 +45,27 @@ class TracelModule:
 
 sys.modules['tracel'] = TracelModule()
 
+# --- SANDBOX: import allowlist ---
+# Only imports made by the user's program are checked. Allowed modules import
+# their own internals freely, which must keep working.
+ALLOWED_MODULES = {
+    'math', 'random', 'collections', 'heapq', 'bisect', 'itertools', 'functools',
+    'operator', 'string', 're', 'dataclasses', 'typing', 'enum', 'copy',
+    'statistics', 'fractions', 'decimal', 'array', 'time', 'tracel',
+}
+_original_import = builtins.__import__
+
+def _tracel_import(name, globals=None, locals=None, fromlist=(), level=0):
+    from_user_code = bool(globals) and globals.get('__name__') == '__main__'
+    if from_user_code and (level > 0 or name.split('.')[0] not in ALLOWED_MODULES):
+        raise ImportError(
+            f"Tracel's Python sandbox does not allow importing '{name}'. "
+            f"Available modules: {', '.join(sorted(ALLOWED_MODULES))}"
+        )
+    return _original_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = _tracel_import
+
 # --- TRACER & RUNNER ---
 def run_tracel(source_code, stdin_text="", step_limit=5000):
     random.seed(0)
@@ -297,16 +318,19 @@ def run_tracel(source_code, stdin_text="", step_limit=5000):
 
         # Include objects reachable from the locals (node.next.next...), so linked structures render whole.
         id_to_obj = {heap_cache[k]: o for k, o in kept_alive.items()}
-        pending = list(heap_objects.values())
+        # Breadth-first with a depth and count cap; the heap_objects check stops cycles.
+        pending = [(ho, 0) for ho in heap_objects.values()]
         while pending and len(heap_objects) < 200:
-            ho = pending.pop()
+            ho, depth = pending.pop(0)
+            if depth >= 50:
+                continue
             refs = [v for v in ho.get("items", [])] + [v for _, v in ho.get("fields", [])]
             refs += [v for e in ho.get("entries", []) for v in e]
             for ref in refs:
                 rid = ref.get("id") if isinstance(ref, dict) and ref.get("k") == "ref" else None
                 if rid and rid not in heap_objects and rid in id_to_obj:
                     heap_objects[rid] = serialize_heap_object(id_to_obj[rid])
-                    pending.append(heap_objects[rid])
+                    pending.append((heap_objects[rid], depth + 1))
 
         # Collected innermost first; the trace lists frames outermost first.
         frames_list.reverse()
