@@ -66,7 +66,9 @@ export const LensPanel: React.FC = () => {
     (obj) => visibleHeapIds.has(obj.id) && !(trace.lensHints[obj.id] === 'linked_list' && linkedTargets.has(obj.id))
   );
 
-  const activeError = step.kind === 'exception' ? trace.error : null;
+  // Python records a final "module returns" step after an exception; keep the card from the exception on.
+  const errorAt = trace.steps.findIndex((s) => s.kind === 'exception');
+  const activeError = errorAt >= 0 && step.index >= errorAt ? trace.error : null;
 
   const renderStructure = (obj: HeapObject) => {
     const props = { obj, label: varLabelsByHeapId.get(obj.id), frames, events, onHoverRef: setHoveredRefId };
