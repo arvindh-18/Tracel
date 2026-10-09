@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { HeapObject, TraceEvent, Value } from '../../../trace/schema';
 import { ValueCell } from '../values/ValueCell';
 
@@ -54,11 +55,12 @@ export const LinkedListView: React.FC<LinkedListViewProps> = ({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: '6px',
+        gap: '8px',
         backgroundColor: 'var(--bg-2)',
         border: '1px solid var(--line-1)',
-        borderRadius: 'var(--r-6)',
-        padding: '10px',
+        borderRadius: 'var(--r-8)',
+        padding: '12px',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
       }}
     >
       <div
@@ -78,90 +80,126 @@ export const LinkedListView: React.FC<LinkedListViewProps> = ({
         >
           {label || 'linked_list'}
         </span>
-        <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>
+        <span
+          style={{
+            fontSize: '11px',
+            color: 'var(--text-3)',
+            backgroundColor: 'var(--bg-3)',
+            padding: '1px 6px',
+            borderRadius: 'var(--r-4)',
+            border: '1px solid var(--line-1)',
+          }}
+        >
           Linked List [{chain.length} nodes]
         </span>
       </div>
 
-      {/* Nodes Row */}
+      {/* Nodes Row with Flow-In / Flow-Out */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: '4px',
+          gap: '6px',
           overflowX: 'auto',
-          padding: '8px 0',
+          padding: '8px 2px',
         }}
       >
-        {chain.map((node, idx) => (
-          <React.Fragment key={node.id}>
-            {/* Node Box */}
-            <div
-              style={{
-                display: 'flex',
-                border: '1px solid var(--line-2)',
-                borderRadius: 'var(--r-4)',
-                backgroundColor: 'var(--bg-3)',
-                overflow: 'hidden',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '12px',
+        <AnimatePresence mode="popLayout" initial={false}>
+          {chain.map((node, idx) => (
+            <motion.div
+              key={node.id}
+              layout
+              initial={{ opacity: 0, scale: 0.8, x: 25 }}
+              animate={{ opacity: 1, scale: 1, x: 0 }}
+              exit={{ opacity: 0, scale: 0.8, x: -25 }}
+              transition={{
+                type: 'spring',
+                stiffness: 450,
+                damping: 32,
+                mass: 0.8,
               }}
-            >
-              {/* Value side */}
-              <div
-                style={{
-                  padding: '4px 8px',
-                  borderRight: '1px solid var(--line-2)',
-                  color: 'var(--text-1)',
-                }}
-              >
-                <ValueCell value={node.val} onHoverRef={onHoverRef} />
-              </div>
-              {/* Pointer dot side */}
-              <div
-                style={{
-                  padding: '4px 6px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: 'var(--bg-4)',
-                }}
-              >
-                <span
-                  style={{
-                    width: '6px',
-                    height: '6px',
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--sem-ref)',
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Connecting Arrow */}
-            <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                color: 'var(--sem-ref)',
-                fontSize: '14px',
-                padding: '0 2px',
+                gap: '6px',
               }}
             >
-              →
-            </div>
-          </React.Fragment>
-        ))}
+              {/* Node Element Block */}
+              <div
+                style={{
+                  display: 'flex',
+                  border: '1px solid var(--line-2)',
+                  borderRadius: 'var(--r-6)',
+                  backgroundColor: 'var(--bg-3)',
+                  overflow: 'hidden',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '12.5px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                }}
+              >
+                {/* Value Cell */}
+                <div
+                  style={{
+                    padding: '6px 10px',
+                    borderRight: '1px solid var(--line-2)',
+                    color: 'var(--text-1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <ValueCell value={node.val} onHoverRef={onHoverRef} />
+                </div>
+                {/* Pointer Dot Cell */}
+                <div
+                  style={{
+                    padding: '6px 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'var(--bg-4)',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: '7px',
+                      height: '7px',
+                      borderRadius: '50%',
+                      backgroundColor: 'var(--sem-ref)',
+                      boxShadow: '0 0 4px var(--sem-ref-soft)',
+                    }}
+                  />
+                </div>
+              </div>
 
-        {/* Null Terminator */}
+              {/* Connecting Flow Arrow */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  color: 'var(--sem-ref)',
+                  fontSize: '16px',
+                  padding: '0 2px',
+                  userSelect: 'none',
+                }}
+              >
+                →
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {/* Null Terminator Block */}
         <div
           title="nullptr / None"
           style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: '13px',
+            fontSize: '14px',
             color: 'var(--text-3)',
             fontWeight: 'bold',
-            padding: '2px 4px',
+            padding: '4px 8px',
+            backgroundColor: 'var(--bg-3)',
+            border: '1px solid var(--line-1)',
+            borderRadius: 'var(--r-4)',
           }}
         >
           ⊥

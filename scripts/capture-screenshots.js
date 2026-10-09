@@ -12,22 +12,21 @@ const VIEWPORTS = [
 ];
 
 async function main() {
-  const outDir = path.resolve(process.cwd(), 'qa-screenshots');
+  const outDir = path.resolve(process.cwd(), 'qa-screenshots', 'blocks-flow');
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
 
   // Start preview server
   const server = await preview({
-    preview: { port: 4173 },
+    preview: { port: 4174 },
   });
 
-  const url = 'http://localhost:4173';
+  const url = 'http://localhost:4174';
   console.log(`Preview server running at ${url}`);
 
   let browser;
   try {
-    // Try launching with system msedge or chrome first, or standard chromium
     browser = await chromium.launch({
       channel: 'msedge',
       headless: true,
@@ -45,7 +44,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('Browser launched. Capturing screenshots across viewports...');
+  console.log('Browser launched. Capturing screenshots across viewports with block elements and flow animations...');
 
   for (const vp of VIEWPORTS) {
     const context = await browser.newContext({
@@ -57,21 +56,20 @@ async function main() {
 
     // 1. Empty State
     await page.waitForTimeout(500);
-    const emptyFile = path.join(outDir, `${vp.name}-01-empty-state.png`);
+    const emptyFile = path.join(outDir, `${vp.name}-01-empty.png`);
     await page.screenshot({ path: emptyFile });
     console.log(`Captured: ${emptyFile}`);
 
-    // If desktop viewport, capture interactive states
+    // Desktop: Run example to view blocks & flow in action
     if (vp.name.includes('1440x900')) {
-      // 2. Click Run to trace default example
       try {
         const runBtn = await page.$('.tracel-btn');
         if (runBtn) {
           await runBtn.click();
           await page.waitForTimeout(1000);
-          const midRunFile = path.join(outDir, `${vp.name}-02-mid-run.png`);
-          await page.screenshot({ path: midRunFile });
-          console.log(`Captured: ${midRunFile}`);
+          const activeFile = path.join(outDir, `${vp.name}-02-blocks-active.png`);
+          await page.screenshot({ path: activeFile });
+          console.log(`Captured: ${activeFile}`);
         }
       } catch (e) {
         console.warn('Run click warning:', e);
@@ -83,7 +81,7 @@ async function main() {
 
   await browser.close();
   await server.close();
-  console.log('Visual QA screenshots captured successfully!');
+  console.log('All block flow screenshots captured successfully!');
   process.exit(0);
 }
 
@@ -91,4 +89,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-
