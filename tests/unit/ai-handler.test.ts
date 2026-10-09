@@ -106,3 +106,17 @@ describe('Gemini schema', () => {
     expect(SimulateResult.safeParse({ steps: [{ line: 1, ops: [{ op: 'teleport' }] }] }).success).toBe(false);
   });
 });
+
+describe('/api/trace upstream errors', () => {
+  it('reads Gemini error bodies and recognises a bad key', async () => {
+    resetRateLimit();
+    const body = JSON.stringify([{ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } }]);
+    const out = await handleTraceRequest(
+      simulateBody,
+      env(async () => {
+        throw Object.assign(new Error('400 API error occurred'), { status: 400, body });
+      })
+    );
+    expect(errorOf(out)?.message).toContain('GEMINI_API_KEY');
+  });
+});

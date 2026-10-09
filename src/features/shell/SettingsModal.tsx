@@ -89,9 +89,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             value={aiSimulate}
             onChange={(e) => setAiPrefs({ aiSimulate: e.target.value as AiSimulateMode })}
           >
-            <option value="auto">Interpreter, AI for the rest (default)</option>
+            <option value="auto">Interpreter + AI (default)</option>
             <option value="never">Interpreter only</option>
-            <option value="always">Always AI-simulated</option>
+            <option value="always">Always AI</option>
           </select>
         </Row>
         <Row id="settings-ai-steps" label="AI step limit" hint="Maximum steps in an AI-simulated trace">

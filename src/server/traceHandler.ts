@@ -145,11 +145,11 @@ export async function handleTraceRequest(rawBody: unknown, env: HandlerEnv): Pro
     } catch (err) {
       if (err instanceof TimeoutError) return fail(504, 'timeout', 'The AI took too long to answer. Try a shorter program or run again.');
       const status = (err as { status?: number }).status;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = upstreamMessage(err);
       if (status === 429 || /quota|resource.?exhausted/i.test(message)) {
         return fail(429, 'quota', 'The Gemini API quota or rate limit was reached. Wait a minute, or check the key’s quota in Google AI Studio.');
       }
-      if (status === 401 || status === 403 || /api key/i.test(message)) {
+      if (status === 401 || status === 403 || /api.?key/i.test(message)) {
         return fail(502, 'upstream', 'Gemini rejected the API key. Check GEMINI_API_KEY in .env.');
       }
       return fail(502, 'upstream', `The Gemini request failed: ${message.slice(0, 200)}`);
@@ -167,6 +167,21 @@ export async function handleTraceRequest(rawBody: unknown, env: HandlerEnv): Pro
     problem = describeIssues(checked.error);
   }
   return fail(502, 'invalid_output', 'The AI returned a trace Tracel could not read, even after a retry. Run again, or simplify the program.');
+}
+
+/** Gemini's own error text, from the SDK error body when there is one. */
+function upstreamMessage(err: unknown): string {
+  const body = (err as { body?: unknown }).body;
+  if (typeof body === 'string') {
+    try {
+      const parsed = JSON.parse(body) as unknown;
+      const first = (Array.isArray(parsed) ? parsed[0] : parsed) as { error?: { message?: string; status?: string } };
+      if (first?.error?.message) return `${first.error.message}${first.error.status ? ` (${first.error.status})` : ''}`;
+    } catch {
+      // Not JSON; fall through.
+    }
+  }
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Best-effort client IP from common proxy headers. */
