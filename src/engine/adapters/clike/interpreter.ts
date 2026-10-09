@@ -335,8 +335,10 @@ class Interpreter {
 
   // ---- storage ----
 
-  private alloc(kind: BlockKind, region: Block['region'], elemType: TypeInfo, items: RV[] = [], struct?: StructDef): Block {
-    const id = `h${++this.blockCounter}`;
+  /** `label` names a variable's own storage, so a pointer to it reads "→ x" rather than "→ h3". */
+  private alloc(kind: BlockKind, region: Block['region'], elemType: TypeInfo, items: RV[] = [], struct?: StructDef, label?: string): Block {
+    let id = label ?? `h${++this.blockCounter}`;
+    for (let n = 2; label && this.blocks.has(id); n++) id = `${label}#${n}`;
     const count = Math.max(1, items.length);
     const bytes = struct ? sizeOf({ ...INT_TYPE, base: struct.name }, this.program.structs) : count * sizeOf(elemType, this.program.structs);
     let addr: number;
@@ -968,7 +970,7 @@ class Interpreter {
         return [p.name, { b: copy, whole: true }];
       }
       const v = a.t === 'agg' && a.b.kind === 'array' ? ({ t: 'ptr', b: a.b, o: 0, ty: a.b.elemType } as RV) : a;
-      const b = this.alloc('scalar', 'stack', p.type, [this.coerce(v, p.type)]);
+      const b = this.alloc('scalar', 'stack', p.type, [this.coerce(v, p.type)], undefined, p.name);
       scope.owned.push(b);
       return [p.name, { b, i: 0 }];
     });
@@ -1441,7 +1443,7 @@ class Interpreter {
             if (s.decl.type.ref) scope.vars.set(s.decl.name, { b, i });
             else {
               const ty = s.decl.type.base === 'auto' ? b.elemType : s.decl.type;
-              const cell = this.alloc('scalar', 'stack', ty, [this.coerce(b.items[i]!, ty)]);
+              const cell = this.alloc('scalar', 'stack', ty, [this.coerce(b.items[i]!, ty)], undefined, s.decl.name);
               scope.owned.push(cell);
               const old = scope.vars.get(s.decl.name);
               if (old) {
@@ -1564,7 +1566,7 @@ class Interpreter {
     else value = init ?? this.makeDefault(resolved, region, null, zero);
     if (value.t === 'agg' && value.b.kind === 'array') value = { t: 'ptr', b: value.b, o: 0, ty: value.b.elemType };
     if (value.t === 'ptr' && resolved.ptr && value.b?.elemType.base === 'byte') this.retype(value.b, this.pointee(resolved));
-    const b = this.alloc('scalar', region, resolved, [this.coerce(value, resolved)]);
+    const b = this.alloc('scalar', region, resolved, [this.coerce(value, resolved)], undefined, d.name);
     scope.owned.push(b);
     const old = scope.vars.get(d.name);
     if (old && old.b.kind === 'scalar') {

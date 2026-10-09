@@ -26,7 +26,7 @@ export const ArrayView: React.FC<ArrayViewProps> = ({ obj, label, frames, events
     else if (ev.type === 'item_swap' && ev.id === obj.id) changed.add(ev.i).add(ev.j);
   }
 
-  const cursors = indexCursors(frames, items.length);
+  const cursors = indexCursors(frames, items.length, obj.id);
   // Exactly one current cell: the cursor that just moved, else the first cursor.
   const moved = cursors.find((c) => events.some((e) => (e.type === 'var_update' || e.type === 'var_create') && e.name === c.name));
   const current = (moved ?? cursors[0])?.index;

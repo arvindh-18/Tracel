@@ -11,8 +11,11 @@ export interface Cursor {
   index: number;
 }
 
-/** Integer locals of the running (innermost) frame that index into a sequence of `length`. */
-export function indexCursors(frames: Frame[], length: number): Cursor[] {
+/**
+ * Integer locals of the running (innermost) frame that index into a sequence of `length`,
+ * plus pointers in any frame that point at an element of `id`.
+ */
+export function indexCursors(frames: Frame[], length: number, id?: HeapId): Cursor[] {
   const frame = frames[frames.length - 1];
   if (!frame) return [];
   const cursors: Cursor[] = [];
@@ -20,6 +23,15 @@ export function indexCursors(frames: Frame[], length: number): Cursor[] {
     if (v.k !== 'int' || !INDEX_NAMES.test(name)) continue;
     const index = Number(v.v);
     if (Number.isInteger(index) && index >= 0 && index < length) cursors.push({ name, index });
+  }
+  if (id) {
+    for (let f = frames.length - 1; f >= 0; f--) {
+      for (const [name, v] of frames[f]!.locals) {
+        if (v.k === 'ptr' && v.id === id && v.offset >= 0 && v.offset < length && !cursors.some((c) => c.name === name)) {
+          cursors.push({ name, index: v.offset });
+        }
+      }
+    }
   }
   return cursors;
 }
