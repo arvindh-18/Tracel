@@ -37,5 +37,13 @@ export interface LanguageAdapter {
     onProgress?: (stepCount: number) => void
   ): Promise<RawTrace>;
   supportInfo: SupportInfo;
+  /** Abandons the run in progress, if any; its promise rejects with RunCancelled. */
+  cancel?(): void;
+}
+
+export class RunCancelled extends Error {
+  constructor() {
+    super('Run cancelled');
+  }
 }
 

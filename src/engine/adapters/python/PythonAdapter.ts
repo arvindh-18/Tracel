@@ -1,4 +1,4 @@
-import { LanguageAdapter, RunRequest, SupportInfo } from '../types';
+import { LanguageAdapter, RunCancelled, RunRequest, SupportInfo } from '../types';
 import { RawTrace } from '../../../trace/normalize';
 import { enhancePythonError } from './explain';
 
@@ -13,6 +13,7 @@ export class PythonAdapter implements LanguageAdapter {
   private worker: Worker | null = null;
   private isReady = false;
   private pendingRequestId = 0;
+  private rejectPending: ((err: Error) => void) | null = null;
 
   supportInfo: SupportInfo = {
     allowedImports: [
@@ -70,11 +71,13 @@ export class PythonAdapter implements LanguageAdapter {
     if (this.isReady) return;
     const worker = this.ensureWorker();
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.rejectPending = reject;
       const handler = (e: MessageEvent) => {
         if (e.data.type === 'ready' || e.data.type === 'status') {
           if (e.data.type === 'ready') {
             this.isReady = true;
+            this.rejectPending = null;
             worker.removeEventListener('message', handler);
             resolve();
           }
@@ -93,12 +96,17 @@ export class PythonAdapter implements LanguageAdapter {
     const reqId = ++this.pendingRequestId;
     const startTime = performance.now();
 
-    return new Promise<RawTrace>((resolve) => {
+    return new Promise<RawTrace>((resolve, reject) => {
       let timeoutId: number | null = null;
 
       const cleanup = () => {
         if (timeoutId !== null) clearTimeout(timeoutId);
         worker.removeEventListener('message', messageHandler);
+        this.rejectPending = null;
+      };
+      this.rejectPending = (err) => {
+        cleanup();
+        reject(err);
       };
 
       const messageHandler = (e: MessageEvent) => {
@@ -157,5 +165,14 @@ export class PythonAdapter implements LanguageAdapter {
       });
     });
   }
-}
 
+  cancel(): void {
+    // Python can't be interrupted mid-run, so the worker is thrown away; the next run starts a fresh one.
+    if (!this.worker) return;
+    this.worker.terminate();
+    this.worker = null;
+    this.isReady = false;
+    this.rejectPending?.(new RunCancelled());
+    this.rejectPending = null;
+  }
+}

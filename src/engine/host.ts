@@ -38,6 +38,10 @@ class EngineHost {
 
     return normalize(rawTrace);
   }
+
+  cancel(lang: 'python' | 'c' | 'cpp') {
+    this.getAdapter(lang).cancel?.();
+  }
 }
 
 export const engineHost = new EngineHost();

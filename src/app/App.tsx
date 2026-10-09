@@ -1,5 +1,5 @@
 import { MotionConfig } from 'motion/react';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TopBar } from '../features/shell/TopBar';
 import { CodeEditor } from '../features/editor/CodeEditor';
 import { LensPanel } from '../features/lens/LensPanel';
@@ -11,6 +11,7 @@ import { useSessionStore } from '../store/session';
 import { usePlaybackStore, PlaybackSpeed } from '../store/playback';
 import { usePrefsStore } from '../store/prefs';
 import { engineHost } from '../engine/host';
+import { RunCancelled } from '../engine/adapters/types';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { useApplyTheme } from './useTheme';
 import styles from './App.module.css';
@@ -39,6 +40,7 @@ export const App: React.FC = () => {
   const jumpToStep = usePlaybackStore((s) => s.jumpToStep);
   const jumpToEnd = usePlaybackStore((s) => s.jumpToEnd);
   const setSpeed = usePlaybackStore((s) => s.setSpeed);
+  const runIdRef = useRef(0);
 
   const stepLimit = usePrefsStore((s) => s.stepLimit);
   const reducedMotion = usePrefsStore((s) => s.reducedMotion);
@@ -59,6 +61,7 @@ export const App: React.FC = () => {
   const handleRun = useCallback(async () => {
     if (isRunning) return;
 
+    const runId = ++runIdRef.current;
     setIsRunning(true);
     setRunProgress(0);
 
@@ -74,6 +77,7 @@ export const App: React.FC = () => {
         stepLimit,
         (steps) => setRunProgress(steps)
       );
+      if (runId !== runIdRef.current) return; // stopped while running
 
       setRuntimeLoading(false);
       setIsRunning(false);
@@ -82,6 +86,7 @@ export const App: React.FC = () => {
       restart();
       play();
     } catch (err: any) {
+      if (err instanceof RunCancelled || runId !== runIdRef.current) return;
       setRuntimeLoading(false);
       setIsRunning(false);
       setError({
@@ -97,8 +102,12 @@ export const App: React.FC = () => {
   }, [code, isRunning, language, play, restart, setError, setIsRunning, setRunProgress, setRuntimeLoading, setTrace, stdin, stepLimit]);
 
   const handleStop = useCallback(() => {
+    runIdRef.current++; // any result still on its way is ignored
+    engineHost.cancel(language);
+    pause();
+    setRuntimeLoading(false);
     setIsRunning(false);
-  }, [setIsRunning]);
+  }, [language, pause, setIsRunning, setRuntimeLoading]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
