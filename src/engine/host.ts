@@ -6,7 +6,7 @@ import { DEFAULT_AI_STEP_LIMIT } from './adapters/ai/config';
 import { applyNarrations, lensHintsById, mergeExplanation, traceDigest } from './adapters/ai/explainMerge';
 import { getApiKey } from './adapters/ai/keyStore';
 import { replay } from './adapters/ai/replay';
-import { normalize } from '../trace/normalize';
+import { normalize, RawTrace } from '../trace/normalize';
 import { Trace } from '../trace/schema';
 
 export interface ExecuteOptions {
@@ -15,6 +15,8 @@ export interface ExecuteOptions {
   /** Add Gemini narration, an overview and lens choices to the real trace (needs a key). */
   aiExplanations?: boolean;
   aiModel?: string;
+  /** Rewrites the raw trace before normalizing (LeetCode mode maps it back to the user's code). */
+  transform?: (raw: RawTrace) => RawTrace;
 }
 
 class EngineHost {
@@ -46,7 +48,8 @@ class EngineHost {
     const adapter = this.getAdapter(lang);
     await adapter.prepare();
     const req: RunRequest = { source, stdin, stepLimit, onStatus: options.onStatus };
-    const trace = normalize(await adapter.run(req, options.onProgress));
+    const raw = await adapter.run(req, options.onProgress);
+    const trace = normalize(options.transform ? options.transform(raw) : raw);
     if (options.aiExplanations && getApiKey()) return this.explain(trace, stdin, options);
     return trace;
   }

@@ -7,6 +7,7 @@ import { IconButton } from '../../ui/IconButton';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { Popover, MenuGroup, MenuItem } from '../../ui/Popover';
 import { EXAMPLES, Example } from '../examples/registry';
+import { LC_EXAMPLES, LcExample } from '../leetcode/examples';
 import { shareUrl } from '../share/share';
 import { toast } from '../../store/toasts';
 import styles from './TopBar.module.css';
@@ -53,11 +54,20 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
   const [examplesOpen, setExamplesOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
 
+  const leetcode = useSessionStore((s) => s.leetcode);
+  const setLeetcode = useSessionStore((s) => s.setLeetcode);
+  const setTestCase = useSessionStore((s) => s.setTestCase);
   const examples = EXAMPLES.filter((e) => e.language === language);
   const categories = Array.from(new Set(examples.map((e) => e.category)));
+  const lcExamples = LC_EXAMPLES.filter((e) => e.language === language);
 
   const selectExample = (ex: Example) => {
     setCode(ex.code);
+    setExamplesOpen(false);
+  };
+  const selectLcExample = (ex: LcExample) => {
+    setCode(ex.code);
+    setTestCase(ex.testCase);
     setExamplesOpen(false);
   };
 
@@ -99,7 +109,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
             </Button>
           }
         >
-          {categories.map((cat) => (
+          {leetcode && (
+            <MenuGroup label="LeetCode problems">
+              {lcExamples.map((ex) => (
+                <MenuItem key={ex.id} selected={ex.code === code} onSelect={() => selectLcExample(ex)}>
+                  {ex.title}
+                </MenuItem>
+              ))}
+            </MenuGroup>
+          )}
+          {!leetcode && categories.map((cat) => (
             <MenuGroup key={cat} label={cat}>
               {examples
                 .filter((e) => e.category === cat)
@@ -111,6 +130,24 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
             </MenuGroup>
           ))}
         </Popover>
+
+        <button
+          type="button"
+          className={styles.modeToggle}
+          aria-pressed={leetcode}
+          disabled={language === 'c'}
+          title={
+            language === 'c'
+              ? 'LeetCode mode is for C++ and Python'
+              : leetcode
+                ? 'Back to normal programs with main()'
+                : 'Write only class Solution and run it with a test case, like on LeetCode'
+          }
+          onClick={() => setLeetcode(!leetcode)}
+        >
+          <span className={styles.modeDot} aria-hidden />
+          LeetCode
+        </button>
       </div>
 
       <div className={styles.actions}>
@@ -159,8 +196,8 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
           icon={<Link2 size={16} />}
           label="Copy a share link to this program"
           onClick={async () => {
-            const { language: lang, codeByLanguage, stdin } = useSessionStore.getState();
-            const url = shareUrl({ language: lang, code: codeByLanguage[lang], stdin });
+            const { language: lang, codeByLanguage, stdin, leetcode: lc, testCaseByLanguage } = useSessionStore.getState();
+            const url = shareUrl({ language: lang, code: codeByLanguage[lang], stdin: lc ? testCaseByLanguage[lang] : stdin, leetcode: lc });
             window.history.replaceState(null, '', url);
             try {
               await navigator.clipboard.writeText(url);

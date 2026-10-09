@@ -58,3 +58,27 @@
   outline: none;
   border-color: var(--line-3);
 }
+
+.testHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12) 0;
+}
+
+.testTitle {
+  color: var(--text-1);
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.testMethod {
+  height: 24px;
+  padding: 0 var(--sp-4);
+  color: var(--text-1);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-cell);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+}

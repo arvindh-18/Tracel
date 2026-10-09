@@ -120,3 +120,45 @@
     display: none;
   }
 }
+
+.modeToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  height: 28px;
+  padding: 0 var(--sp-12);
+  color: var(--text-2);
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: var(--fs-title);
+  cursor: pointer;
+}
+
+.modeToggle:hover:not(:disabled) {
+  color: var(--text-1);
+  border-color: var(--line-3, var(--line-2));
+}
+
+.modeToggle[aria-pressed='true'] {
+  color: var(--text-1);
+  border-color: var(--exec);
+  background-color: var(--exec-soft);
+  font-weight: 600;
+}
+
+.modeToggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.modeDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--line-2);
+}
+
+.modeToggle[aria-pressed='true'] .modeDot {
+  background-color: var(--exec);
+}

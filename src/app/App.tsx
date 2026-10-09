@@ -15,6 +15,7 @@ import { RunCancelled } from '../engine/adapters/types';
 import { toast } from '../store/toasts';
 import { Toaster } from '../ui/Toaster';
 import { loadPrebuilt } from '../features/examples/prebuilt';
+import { buildProgram, mapBack, testCaseError } from '../features/leetcode/runner';
 import { readSharedProgram } from '../features/share/share';
 import { getApiKey } from '../engine/adapters/ai/keyStore';
 import { SegmentedControl } from '../ui/SegmentedControl';
@@ -76,6 +77,35 @@ export const App: React.FC = () => {
       }
 
       const { aiExplanations, aiModel } = usePrefsStore.getState();
+      const { leetcode, testCaseByLanguage, lcMethod } = useSessionStore.getState();
+      if (leetcode) {
+        // LeetCode mode: wrap the Solution class in a generated runner, then show only the user's lines.
+        let program;
+        try {
+          program = buildProgram(language, code, testCaseByLanguage[language], lcMethod ?? undefined);
+        } catch (err) {
+          setRuntimeLoading(false);
+          setIsRunning(false);
+          setTrace(null);
+          setError(testCaseError(err));
+          return;
+        }
+        const lcTrace = await engineHost.execute(language, program.source, '', stepLimit, {
+          onProgress: (steps) => setRunProgress(steps),
+          onStatus: (message) => runId === runIdRef.current && setRuntimeLoading(true, message),
+          aiExplanations,
+          aiModel,
+          transform: (raw) => mapBack(raw, program, code),
+        });
+        if (runId !== runIdRef.current) return;
+        setRuntimeLoading(false);
+        setIsRunning(false);
+        setTrace(lcTrace);
+        if (lcTrace.aiNotice) toast(lcTrace.aiNotice, 'error');
+        restart();
+        play();
+        return;
+      }
       // An unchanged built-in example has a prebuilt trace: no engine, no network.
       const prebuilt = await loadPrebuilt(language, code, stdin);
       const wantsAi = aiExplanations && getApiKey() !== null;
@@ -125,6 +155,12 @@ export const App: React.FC = () => {
     if (!shared) return;
     const session = useSessionStore.getState();
     session.setLanguage(shared.language);
+    if (shared.leetcode && shared.language !== 'c') {
+      session.setLeetcode(true);
+      session.setCode(shared.code);
+      session.setTestCase(shared.stdin);
+      return;
+    }
     session.setCode(shared.code);
     session.setStdin(shared.stdin);
   }, []);

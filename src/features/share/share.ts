@@ -7,10 +7,12 @@ export interface SharedProgram {
   language: 'python' | 'c' | 'cpp';
   code: string;
   stdin: string;
+  /** LeetCode mode: stdin holds the test case. */
+  leetcode?: boolean;
 }
 
 export function shareUrl(program: SharedProgram): string {
-  const payload = compressToEncodedURIComponent(JSON.stringify({ l: program.language, c: program.code, i: program.stdin }));
+  const payload = compressToEncodedURIComponent(JSON.stringify({ l: program.language, c: program.code, i: program.stdin, ...(program.leetcode ? { m: 'lc' } : {}) }));
   return `${location.origin}${location.pathname}#code=${payload}`;
 }
 
@@ -18,9 +20,9 @@ export function readSharedProgram(hash: string): SharedProgram | null {
   const match = hash.match(/(?:^#|&)code=([^&]+)/);
   if (!match) return null;
   try {
-    const data = JSON.parse(decompressFromEncodedURIComponent(match[1]!) ?? '') as { l?: string; c?: unknown; i?: unknown };
+    const data = JSON.parse(decompressFromEncodedURIComponent(match[1]!) ?? '') as { l?: string; c?: unknown; i?: unknown; m?: unknown };
     if ((data.l === 'python' || data.l === 'c' || data.l === 'cpp') && typeof data.c === 'string') {
-      return { language: data.l, code: data.c, stdin: typeof data.i === 'string' ? data.i : '' };
+      return { language: data.l, code: data.c, stdin: typeof data.i === 'string' ? data.i : '', ...(data.m === 'lc' ? { leetcode: true } : {}) };
     }
   } catch {
     // Corrupt or truncated link.

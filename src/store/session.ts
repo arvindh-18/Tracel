@@ -2,6 +2,7 @@ import { clearStateCache } from '../trace/reconstruct';
 import { create } from 'zustand';
 import { Trace, TraceError } from '../trace/schema';
 import { getDefaultExample } from '../features/examples/registry';
+import { defaultLcExample } from '../features/leetcode/examples';
 
 export type SupportedLanguage = 'python' | 'c' | 'cpp';
 
@@ -16,6 +17,11 @@ export interface SessionState {
   runtimeLoadProgress: string;
   error: TraceError | null;
   stdin: string;
+  /** LeetCode mode: the editor holds a Solution class and runs with a test case. */
+  leetcode: boolean;
+  testCaseByLanguage: Record<SupportedLanguage, string>;
+  /** Which Solution method to run, when there are several. */
+  lcMethod: string | null;
 
   // Actions
   setLanguage: (lang: SupportedLanguage) => void;
@@ -27,6 +33,9 @@ export interface SessionState {
   setRuntimeLoading: (loading: boolean, progress?: string) => void;
   setError: (error: TraceError | null) => void;
   setStdin: (input: string) => void;
+  setLeetcode: (on: boolean) => void;
+  setTestCase: (text: string) => void;
+  setLcMethod: (name: string | null) => void;
   resetSession: () => void;
 }
 
@@ -48,6 +57,36 @@ try {
   // localStorage not available
 }
 
+// Each mode keeps its own code per language; switching modes swaps the editor contents.
+const codeKey = (lc: boolean, lang: SupportedLanguage) => (lc ? `tracel:lc-code:${lang}` : `tracel:code:${lang}`);
+const readStored = (key: string) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const store = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Not persisted.
+  }
+};
+const savedCode: Record<'normal' | 'lc', Record<SupportedLanguage, string>> = {
+  normal: { ...initialCode },
+  lc: {
+    python: readStored(codeKey(true, 'python')) ?? defaultLcExample('python')?.code ?? '',
+    c: '',
+    cpp: readStored(codeKey(true, 'cpp')) ?? defaultLcExample('cpp')?.code ?? '',
+  },
+};
+const initialTestCases: Record<SupportedLanguage, string> = {
+  python: readStored('tracel:lc-test:python') ?? defaultLcExample('python')?.testCase ?? '',
+  c: '',
+  cpp: readStored('tracel:lc-test:cpp') ?? defaultLcExample('cpp')?.testCase ?? '',
+};
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   language: 'python',
   codeByLanguage: initialCode,
@@ -59,9 +98,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   runtimeLoadProgress: '',
   error: null,
   stdin: '',
+  leetcode: false,
+  testCaseByLanguage: initialTestCases,
+  lcMethod: null,
 
   setLanguage: (language) => {
-    set({ language, isStale: false, trace: null, error: null });
+    // C has no classes, so LeetCode mode is for C++ and Python.
+    if (language === 'c' && get().leetcode) get().setLeetcode(false);
+    set({ language, isStale: false, trace: null, error: null, lcMethod: null });
     try {
       localStorage.setItem('tracel:last-language', language);
     } catch {}
@@ -73,10 +117,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       codeByLanguage: { ...state.codeByLanguage, [lang]: code },
       isStale: state.trace !== null, // Mark trace as stale if code changed
     }));
-    try {
-      localStorage.setItem(`tracel:code:${lang}`, code);
-    } catch {}
+    savedCode[get().leetcode ? 'lc' : 'normal'][lang] = code;
+    store(codeKey(get().leetcode, lang), code);
   },
+
+  setLeetcode: (on) => {
+    const { leetcode, codeByLanguage } = get();
+    if (on === leetcode) return;
+    savedCode[leetcode ? 'lc' : 'normal'] = { ...codeByLanguage };
+    set({ leetcode: on, codeByLanguage: { ...savedCode[on ? 'lc' : 'normal'] }, trace: null, error: null, isStale: false, lcMethod: null });
+  },
+
+  setTestCase: (text) => {
+    const lang = get().language;
+    set((s) => ({ testCaseByLanguage: { ...s.testCaseByLanguage, [lang]: text }, isStale: s.trace !== null }));
+    store(`tracel:lc-test:${lang}`, text);
+  },
+
+  setLcMethod: (lcMethod) => set({ lcMethod }),
 
   setTrace: (trace) => {
     // Cached view states are keyed by source; a new run of the same code must not reuse them.

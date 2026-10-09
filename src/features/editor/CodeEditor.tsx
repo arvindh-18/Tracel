@@ -16,6 +16,7 @@ import {
 import { stateAt } from '../../trace/reconstruct';
 import { Button } from '../../ui/Button';
 import { DisclosureButton } from '../../ui/Disclosure';
+import { findMethods } from '../leetcode/runner';
 import { KeyCombo, modKey } from '../../ui/Kbd';
 import styles from './CodeEditor.module.css';
 
@@ -33,6 +34,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
   const isStale = useSessionStore((s) => s.isStale);
   const trace = useSessionStore((s) => s.trace);
   const stdin = useSessionStore((s) => s.stdin);
+  const leetcode = useSessionStore((s) => s.leetcode);
   const setStdin = useSessionStore((s) => s.setStdin);
 
   const currentStepIndex = usePlaybackStore((s) => s.currentStepIndex);
@@ -177,6 +179,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
 
       <div ref={containerRef} className={styles.editor} />
 
+      {leetcode ? (
+        <TestCasePanel />
+      ) : (
       <div className={styles.stdin}>
         <DisclosureButton block open={stdinOpen} aria-controls="stdin-input" onClick={() => setStdinOpen(!stdinOpen)}>
           Input (stdin)
@@ -193,6 +198,47 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ onRun }) => {
           />
         )}
       </div>
+      )}
+    </div>
+  );
+};
+
+/** LeetCode mode: the method to run and its arguments, written the way LeetCode shows them. */
+const TestCasePanel: React.FC = () => {
+  const language = useSessionStore((s) => s.language);
+  const code = useSessionStore((s) => s.codeByLanguage[s.language]);
+  const testCase = useSessionStore((s) => s.testCaseByLanguage[s.language]);
+  const setTestCase = useSessionStore((s) => s.setTestCase);
+  const lcMethod = useSessionStore((s) => s.lcMethod);
+  const setLcMethod = useSessionStore((s) => s.setLcMethod);
+  const methods = findMethods(language, code);
+  const method = methods.find((m) => m.name === lcMethod) ?? methods[0];
+  const hint = method?.params.length ? method.params.map((p) => `${p.name} = …`).join(', ') : 'This method takes no arguments';
+
+  return (
+    <div className={styles.stdin}>
+      <div className={styles.testHeader}>
+        <span className={styles.testTitle}>Test case</span>
+        {methods.length > 1 ? (
+          <select aria-label="Method to run" className={styles.testMethod} value={method?.name} onChange={(e) => setLcMethod(e.target.value)}>
+            {methods.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.name}()
+              </option>
+            ))}
+          </select>
+        ) : (
+          method && <span className={styles.stdinHint}>{method.name}({method.params.map((p) => p.name).join(', ')})</span>
+        )}
+      </div>
+      <textarea
+        aria-label="Test case"
+        className={styles.stdinInput}
+        value={testCase}
+        onChange={(e) => setTestCase(e.target.value)}
+        placeholder={`${hint}\nor one argument per line, like LeetCode's test case box`}
+        spellCheck={false}
+      />
     </div>
   );
 };
