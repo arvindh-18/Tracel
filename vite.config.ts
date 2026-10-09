@@ -23,7 +23,4 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'credentialless',
     },
   },
-  optimizeDeps: {
-    exclude: ['web-tree-sitter'],
-  },
 });

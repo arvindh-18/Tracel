@@ -1,6 +1,8 @@
 # Tracel
 
-Tracel runs a Python, C or C++ program in the browser and lets you step through it line by line while it shows the call frames, variables and data structures at each step.
+Tracel runs a Python, C or C++ program in your browser and lets you step through it line by line while it draws the call frames, variables, pointers and data structures (arrays, 2-D grids, stacks, queues, linked lists, trees, dicts, objects) at each step.
+
+It is a static site: no server, no database, no account. Your code runs in your own browser. AI explanations are optional and use your own free Gemini key.
 
 ![Tracel in the light theme](docs/screenshots/light.png)
 ![Tracel in the dark theme](docs/screenshots/dark.png)
@@ -11,41 +13,67 @@ Requires Node.js 18 or later.
 
 ```bash
 npm install
-cp .env.example .env     # optional: add GEMINI_API_KEY for the AI features
 npm run dev              # development server on http://localhost:5173
-npm test                 # unit and golden tests
-npm run build            # type-check and production build
+npm test                 # unit and golden tests (the Python tracer tests need python3 3.12)
+npx tsc --noEmit         # type-check
+npm run build            # static site in dist/
+npx vite preview         # serve the build locally
+npm run gen:examples     # regenerate the prebuilt example traces (see below)
 npm run check:contrast   # WCAG contrast check for both themes
 ```
 
-`node scripts/capture-screenshots.js` serves the last build, so run `npm run build` first. It captures every viewport in both themes into `qa-screenshots/`.
+`node scripts/capture-screenshots.js` serves the last build and captures every viewport in both themes into `qa-screenshots/`.
 
 ## Languages and limits
 
-**Python** runs CPython 3.12 (Pyodide) in a Web Worker, traced with `sys.settrace`. Your program may import only `math`, `random` (seeded with 0), `collections`, `heapq`, `bisect`, `itertools`, `functools`, `operator`, `string`, `re`, `dataclasses`, `typing`, `enum`, `copy`, `statistics`, `fractions`, `decimal`, `array`, `time` and the `tracel` helper module (`tracel.Stack`, `tracel.Queue`); anything else raises an `ImportError`. After Pyodide loads, the worker removes `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and `importScripts`.
+**Python** runs real CPython 3.12 (Pyodide, loaded from the jsDelivr CDN the first time you run edited Python code) in a Web Worker, traced with `sys.settrace`. Your program may import only `math`, `random` (seeded with 0), `collections`, `heapq`, `bisect`, `itertools`, `functools`, `operator`, `string`, `re`, `dataclasses`, `typing`, `enum`, `copy`, `statistics`, `fractions`, `decimal`, `array`, `time` and the `tracel` helper module (`tracel.Stack`, `tracel.Queue`); anything else raises an `ImportError`. After Pyodide loads, the worker removes `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and `importScripts`. Objects reachable from your variables are drawn to a depth of 6, up to 300 objects and 100 items per container.
 
-**C and C++** run on Tracel's own interpreter in the browser. It covers a subset: loops, functions and recursion, references, arrays, pointers and pointer arithmetic, structs, `malloc`/`free`, `new`/`delete`, `printf`/`scanf`, `std::cout`/`std::cin`, `std::string`, `std::vector`, `std::stack`, `std::queue`, `sort` and `swap`. Out-of-bounds access, null dereference, use-after-free, double free, uninitialized reads, division by zero, popping an empty container and runaway recursion stop the run on the offending line. Classes, templates, enums, exceptions and multi-dimensional arrays are not supported by the interpreter.
+**C and C++** run on Tracel's own deterministic interpreter (`src/engine/adapters/clike`: a tokenizer, a recursive-descent parser and a tree-walking evaluator) in a Web Worker. No AI is involved in running code. The supported subset:
 
-Every run stops after 5,000 steps by default (up to 20,000 in Settings), and a watchdog ends any Python run that takes longer than 8 seconds.
+- **Types:** `char`, `bool`, `short`, `int`, `long`, `long long`, `unsigned` variants, `float`, `double`, `size_t`. `int` wraps at 32 bits; `long`/`long long` are exact 64-bit values (BigInt); integer division truncates; `%` keeps the sign of the left operand.
+- **Expressions and statements:** arithmetic, comparison, logical, bitwise and compound-assignment operators, prefix/postfix `++`/`--`, ternary, `sizeof`, casts; `if`/`else`, `while`, `do`/`while`, `for`, range-`for`, `break`, `continue`, `switch`/`case`; block scopes with shadowing.
+- **Functions:** recursion, pass by value, pointers and C++ references; call-stack depth limit 256.
+- **Memory:** 1-D and 2-D arrays with initializer lists; pointers, `&`, `*`, `->`, pointer arithmetic, array decay, `NULL`/`nullptr`; `malloc`/`calloc`/`free`, `new`/`new[]`/`delete`/`delete[]`.
+- **Structs and classes:** fields, member functions (inline or `Type Class::f()` out of line), constructors with initializer lists, destructors (run by `delete`), `this`, structs holding pointers (linked lists, trees).
+- **I/O:** `printf` (`%d %i %u %ld %lld %f %.Nf %e %g %c %s %p %x %X %o %%`, width, precision and flags), `scanf`, `puts`, `putchar`, `std::cout`/`std::cin`/`std::endl`, `fixed`/`setprecision`, `std::string` basics. Input comes from the Input box.
+- **Library:** `std::vector` (`push_back`, `pop_back`, `[]`, `at`, `size`, `empty`, `front`, `back`, `clear`, `resize`, range-`for`), `std::stack`, `std::queue`, `std::swap`, `std::sort`, `std::reverse`, `max`, `min`, `abs`, `sqrt`, `pow`, `strlen`, `rand`/`srand`.
+- **Headers:** `stdio.h`, `stdlib.h`, `string.h`, `math.h`, `stdbool.h`, `limits.h`, `stddef.h`, `stdint.h`, `ctype.h`, `time.h`, `iostream`, `vector`, `stack`, `queue`, `string`, `algorithm`, `cmath`, `cstdio`, `cstdlib`, `cstring`, `climits`, `cstddef`, `cstdint`, `iomanip`, `utility`, `bits/stdc++.h`.
 
-## AI features (Gemini)
+Out-of-bounds access, null dereference, use-after-free, dangling pointers, double free, uninitialized reads, division by zero, popping an empty container and runaway recursion stop the run on the exact line, with a plain-language explanation and the variables involved. These are rejected before the program runs, with the line: user-defined templates, inheritance and `virtual`, `goto`, unions, bit-fields, inline assembly, enums, exceptions, static members, your own namespaces, `#include "file.h"` and unknown headers. Access specifiers (`public`/`private`) are accepted but not enforced, and destructors run only on `delete`, not when a local object goes out of scope.
 
-With a `GEMINI_API_KEY` set, Tracel can use Google Gemini in two ways:
+**Limits:** every run stops after 5,000 steps by default (up to 20,000 in Settings), and a watchdog stops any run that takes more than 8 seconds. **Stop** cancels a run immediately: it terminates the worker (a fresh one starts next time) and aborts any AI request.
 
-- **AI explanations** (Settings → AI explanations, off by default): after a real run, Gemini writes a plain-English sentence for each step, suggests how to draw data structures and explains errors. It only adds text; values, state and step count always come from the real engine.
-- **AI simulation for C and C++**: when the interpreter can't run a program (for example it uses a class or a template), Gemini traces it instead and the trace panel says **AI-simulated (Gemini)**. Settings can also make Gemini simulate every C/C++ run, or turn the fallback off.
+## AI features (optional, your own key)
 
-How simulation works: Gemini returns a list of operations per executed line (declare, assign, alloc, write, push, call, return, error…) as structured JSON. Tracel validates it, retrying once if it's malformed, then replays the operations on its own memory model, which checks every operation. If an operation is impossible (an unknown block, a write past the end, a line that doesn't exist) the trace stops there with an error instead of guessing. AI traces are capped at 500 steps by default (Settings).
+Everything above works with no key. To add AI, open **Settings → AI**, paste a free key from [Google AI Studio](https://aistudio.google.com/apikey), and Tracel will:
 
-**Accuracy:** a simulated trace is the model's reading of the program, not a real execution, and can occasionally be wrong. Use the interpreter's result where it exists.
+- **Explain steps:** after a run, write a short "why" sentence for each step in the timeline, plus a 2–3 sentence overview of the program. Narration replaces the built-in text only when Gemini returns exactly one sentence per step; the trace itself (values, state, step count) always comes from the real engine.
+- **Explain this error:** a button on the error card that sends the code, the error and the variables involved, and shows a plain explanation with a suggested fix. The fix is never applied for you.
+- **Simulate with AI (may be inaccurate):** offered when the C++ interpreter rejects a feature. Gemini returns small operations per executed line (call, return, declare, assign, alloc, free, write, push/pop, print, error…), which Tracel validates and replays on its own memory model. The trace stops with an error on any impossible operation instead of guessing. These traces are labelled **AI-simulated** and capped at 500 steps by default.
 
-Setup:
+**Privacy:** the key is stored only in your browser's localStorage (Settings has **Forget key**). It is never logged, never put in a URL and never sent anywhere except Google's API. Requests go directly from your browser to Google under your own key and Google's terms, so don't paste private code. Responses are cached in your browser's IndexedDB, so repeating a request costs nothing. Running out of free quota, a rejected key, network failures and timeouts show a notice; the rest of the app keeps working. You can choose the model in Settings (Gemini 3.8 Flash by default, or 3.5 Flash-Lite).
 
-1. Get a key at [Google AI Studio](https://aistudio.google.com/apikey).
-2. `cp .env.example .env` and set `GEMINI_API_KEY`. Optionally set `GEMINI_MODEL` (default in `src/engine/adapters/ai/config.ts`).
-3. Restart `npm run dev`.
+## Prebuilt examples and share links
 
-The key stays on the server. In development the Vite dev server answers `POST /api/trace`; in production deploy `api/trace.ts` as a serverless function (Vercel style) with `GEMINI_API_KEY` in its environment. Both share `src/server/traceHandler.ts`, which validates input (language, source up to 20,000 characters), rate-limits each IP to 20 requests a minute and times out slow calls. Results are cached in the browser, so re-running the same code doesn't call the API again.
+Every built-in example ships with its trace in `public/examples/<id>.json`, so opening one is instant and needs no engine (not even Pyodide) and no API call. Editing the code switches to a live run. After changing an example in `src/features/examples/registry.ts`, or the trace format, run:
+
+```bash
+npm run gen:examples                      # real engines only
+GEMINI_API_KEY=your-key npm run gen:examples   # also bake in AI explanations
+```
+
+C/C++ examples run on the interpreter; Python examples run the same tracer in Pyodide for Node (the `pyodide` npm package, pinned to the CDN version the site loads). A test fails if an example's JSON is missing or stale.
+
+The share button copies a link with the language, code and input compressed into the URL hash (lz-string). Opening it restores the program. Nothing is uploaded.
+
+## Deploying
+
+`npm run build` produces a static site in `dist/`. To serve it from a subpath, set `BASE_PATH`, for example `BASE_PATH=Tracel npm run build` for `https://<user>.github.io/Tracel/`.
+
+- **GitHub Pages:** `.github/workflows/ci.yml` type-checks, tests and builds on every push, and deploys `main` to Pages with `BASE_PATH` set to the repository name. In the repository settings, set Pages → Source to "GitHub Actions".
+- **Cloudflare Pages / Netlify:** build command `npm run build`, output directory `dist`. Both serve from the domain root, so leave `BASE_PATH` unset. No environment variables are needed.
+
+`index.html` sets a Content-Security-Policy that allows scripts only from the site and jsDelivr (Pyodide), and network requests only to the site, jsDelivr and `generativelanguage.googleapis.com` (Gemini).
 
 ## Keyboard shortcuts
 
