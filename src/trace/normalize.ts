@@ -122,8 +122,9 @@ export function normalize(raw: RawTrace): Trace {
       currentVersions[id] = nextVer;
       stepHeapVersions[id] = nextVer;
 
-      // Infer lens for this object
-      if (!lensHints[id]) {
+      // Infer lens for this object. A struct first seen with unset pointer fields
+      // looks like a plain object; look again once it changes (e.g. next is set).
+      if (!lensHints[id] || lensHints[id] === 'object') {
         // Find if any local refers to it
         let refVarName: string | undefined;
         for (const frame of rawStep.frames) {
