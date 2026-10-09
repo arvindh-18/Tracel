@@ -1,4 +1,5 @@
 import {
+  LensKind,
   Frame,
   HeapId,
   HeapObject,
@@ -32,6 +33,10 @@ export interface RawTrace {
   status: 'completed' | 'error' | 'limit';
   error?: TraceError;
   stats?: { durationMs?: number };
+  /** Set when an AI model produced the trace instead of a real interpreter. */
+  engine?: 'ai';
+  aiNarrations?: (string | undefined)[];
+  aiLensHints?: Record<string, LensKind>;
 }
 
 function hashString(str: string): string {
@@ -223,6 +228,7 @@ export function normalize(raw: RawTrace): Trace {
       durationMs: raw.stats?.durationMs ?? 0,
     },
     lensHints,
+    engine: raw.engine === 'ai' ? 'ai' : 'native',
   };
 }
 

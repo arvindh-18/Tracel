@@ -1,3 +1,4 @@
+import { clearStateCache } from '../trace/reconstruct';
 import { create } from 'zustand';
 import { Trace, TraceError } from '../trace/schema';
 import { getDefaultExample } from '../features/examples/registry';
@@ -78,6 +79,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setTrace: (trace) => {
+    // Cached view states are keyed by source; a new run of the same code must not reuse them.
+    clearStateCache();
     set({
       trace,
       isStale: false,

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Monitor, Sun, Moon } from 'lucide-react';
-import { usePrefsStore, ThemePref } from '../../store/prefs';
+import { usePrefsStore, ThemePref, AiSimulateMode } from '../../store/prefs';
 import { Modal } from '../../ui/Modal';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import styles from './SettingsModal.module.css';
@@ -42,6 +42,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   const setShowAddresses = usePrefsStore((s) => s.setShowAddresses);
   const stepLimit = usePrefsStore((s) => s.stepLimit);
   const setStepLimit = usePrefsStore((s) => s.setStepLimit);
+  const aiExplanations = usePrefsStore((s) => s.aiExplanations);
+  const aiSimulate = usePrefsStore((s) => s.aiSimulate);
+  const aiStepLimit = usePrefsStore((s) => s.aiStepLimit);
+  const setAiPrefs = usePrefsStore((s) => s.setAiPrefs);
 
   return (
     <Modal title="Settings" isOpen={isOpen} onClose={onClose}>
@@ -63,6 +67,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             <option value={5000}>5,000 (default)</option>
             <option value={10000}>10,000</option>
             <option value={20000}>20,000</option>
+          </select>
+        </Row>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.heading}>AI (Gemini)</h3>
+        <Row id="settings-ai-explain" label="AI explanations" hint="Plain-English narration and error help from Gemini">
+          <input
+            id="settings-ai-explain"
+            type="checkbox"
+            className={styles.checkbox}
+            checked={aiExplanations}
+            onChange={(e) => setAiPrefs({ aiExplanations: e.target.checked })}
+          />
+        </Row>
+        <Row id="settings-ai-engine" label="C and C++ engine" hint="AI simulation can occasionally be wrong">
+          <select
+            id="settings-ai-engine"
+            className={styles.select}
+            value={aiSimulate}
+            onChange={(e) => setAiPrefs({ aiSimulate: e.target.value as AiSimulateMode })}
+          >
+            <option value="auto">Interpreter, AI for the rest (default)</option>
+            <option value="never">Interpreter only</option>
+            <option value="always">Always AI-simulated</option>
+          </select>
+        </Row>
+        <Row id="settings-ai-steps" label="AI step limit" hint="Maximum steps in an AI-simulated trace">
+          <select
+            id="settings-ai-steps"
+            className={styles.select}
+            value={aiStepLimit}
+            onChange={(e) => setAiPrefs({ aiStepLimit: Number(e.target.value) })}
+          >
+            <option value={200}>200</option>
+            <option value={500}>500 (default)</option>
+            <option value={1000}>1,000</option>
+            <option value={2000}>2,000</option>
           </select>
         </Row>
       </section>

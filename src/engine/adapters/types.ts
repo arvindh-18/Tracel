@@ -5,6 +5,10 @@ export interface RunRequest {
   source: string;
   stdin?: string;
   stepLimit?: number;
+  /** C/C++ only: when Gemini simulates the program. */
+  ai?: { simulate: 'auto' | 'always' | 'never'; stepLimit: number };
+  /** Short status for the Run button, e.g. "Analyzing code with AI…". */
+  onStatus?: (message: string) => void;
 }
 
 export type RunProgress = {

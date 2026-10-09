@@ -70,13 +70,14 @@ export const App: React.FC = () => {
         setRuntimeLoading(true, 'Preparing Python runtime…');
       }
 
-      const trace = await engineHost.execute(
-        language,
-        code,
-        stdin,
-        stepLimit,
-        (steps) => setRunProgress(steps)
-      );
+      const { aiExplanations, aiSimulate, aiStepLimit } = usePrefsStore.getState();
+      const trace = await engineHost.execute(language, code, stdin, stepLimit, {
+        onProgress: (steps) => setRunProgress(steps),
+        onStatus: (message) => runId === runIdRef.current && setRuntimeLoading(true, message),
+        aiExplanations,
+        aiSimulate,
+        aiStepLimit,
+      });
       if (runId !== runIdRef.current) return; // stopped while running
 
       setRuntimeLoading(false);

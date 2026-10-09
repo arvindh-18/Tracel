@@ -24,3 +24,19 @@
 .linked {
   box-shadow: 0 0 0 2px var(--sem-ref);
 }
+
+.notice {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-6);
+}
+
+.notice strong {
+  color: var(--text-1);
+  font-weight: 600;
+}

@@ -127,6 +127,12 @@ export interface Trace {
   error?: TraceError;
   stats: { steps: number; maxDepth: number; durationMs: number };
   lensHints: Record<HeapId, LensKind>;
+  /** 'ai' when Gemini simulated the program; its state can occasionally be wrong. */
+  engine: 'native' | 'ai';
+  /** Set when AI explanations were merged into narration, lens hints or the error. */
+  aiExplained?: boolean;
+  /** Why the AI explanation pass didn't apply, shown quietly in the UI. */
+  aiNotice?: string;
 }
 
 export interface ViewState {

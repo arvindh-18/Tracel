@@ -44,6 +44,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
   const isRunning = useSessionStore((s) => s.isRunning);
   const runtimeLoading = useSessionStore((s) => s.runtimeLoading);
   const runtimeLoadProgress = useSessionStore((s) => s.runtimeLoadProgress);
+  const aiSimulated = useSessionStore((s) => s.trace?.engine === 'ai');
   const theme = usePrefsStore((s) => s.theme);
   const setTheme = usePrefsStore((s) => s.setTheme);
 
@@ -126,7 +127,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
               aria-expanded={infoOpen}
               onClick={() => setInfoOpen((o) => !o)}
             >
-              <span className={styles.runtimeLabel}>{ENGINE_LABEL[language]}</span>
+              <span className={styles.runtimeLabel}>{aiSimulated ? 'AI-simulated (Gemini)' : ENGINE_LABEL[language]}</span>
               <Info size={14} aria-label="Runtime details" />
             </Button>
           }
@@ -144,8 +145,10 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
               <h3 className={styles.infoTitle}>C and C++ subset</h3>
               <p>Interprets the program with real pointer arithmetic, typed memory blocks and safety checks.</p>
               <p className={styles.infoMeta}>
-                Supports arrays, pointers, structs, classes, std::vector, std::stack, std::queue, printf/scanf and
-                std::cout/cin. Undefined behaviour stops the run with the exact line.
+                Supports arrays, pointers, structs, std::vector, std::stack, std::queue, printf/scanf and std::cout/cin.
+                Undefined behaviour stops the run with the exact line. Programs using features it can't run (classes,
+                templates, enums) are simulated by Gemini when an API key is set up; those traces can occasionally be
+                wrong.
               </p>
             </>
           )}
@@ -159,6 +162,11 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
         />
         <IconButton icon={<Settings size={16} />} label="Settings" onClick={onOpenSettings} />
 
+        {isRunning && runtimeLoading && runtimeLoadProgress && (
+          <span className={styles.status} role="status">
+            {runtimeLoadProgress}
+          </span>
+        )}
         {isRunning ? (
           <Button variant="primary" size="sm" className={styles.run} icon={<Square size={12} fill="currentColor" />} onClick={onStop}>
             Stop
