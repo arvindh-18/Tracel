@@ -32,14 +32,14 @@ function valuesEqual(a: Value | undefined, b: Value | undefined): boolean {
 export function diffFrames(prevFrames: Frame[], nextFrames: Frame[]): TraceEvent[] {
   const events: TraceEvent[] = [];
 
-  // Check top active frame
-  const nextTop = nextFrames[0];
-  const prevTop = prevFrames[0];
+  // Frames are outermost first, so the running frame is the last one.
+  const nextTop = nextFrames[nextFrames.length - 1];
+  const prevTop = prevFrames[prevFrames.length - 1];
 
   if (!nextTop && !prevTop) return events;
 
   // New frame pushed (call)
-  if (nextTop && (!prevTop || nextTop.id !== prevTop.id)) {
+  if (nextTop && (!prevTop || nextFrames.length > prevFrames.length)) {
     events.push({
       type: 'call',
       frame: nextTop.id,
@@ -50,7 +50,7 @@ export function diffFrames(prevFrames: Frame[], nextFrames: Frame[]): TraceEvent
   }
 
   // Frame popped (return)
-  if (prevTop && (!nextTop || prevTop.id !== nextTop.id)) {
+  if (prevTop && (!nextTop || nextFrames.length < prevFrames.length)) {
     events.push({
       type: 'return',
       frame: prevTop.id,
@@ -164,7 +164,7 @@ export function diffHeapObject(
         id: nextObj.id,
         index: nextItems.length - 1,
         value: nextItems[nextItems.length - 1]!,
-        op: nextObj.kind === 'cpp_stack' ? 'push' : 'append',
+        op: nextObj.kind === 'cpp_stack' ? 'push' : nextObj.kind === 'cpp_queue' ? 'enqueue' : 'append',
       });
     } else if (
       prevItems.every((item, i) => valuesEqual(item, nextItems[i + 1])) &&

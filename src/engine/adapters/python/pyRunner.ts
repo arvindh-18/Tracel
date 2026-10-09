@@ -272,12 +272,18 @@ def run_tracel(source_code, stdin_text="", step_limit=5000):
             f_name = f_cursor.f_code.co_name
             f_locals = []
             for k, val in f_cursor.f_locals.items():
-                if not k.startswith('__') and not k.startswith('.'):
-                    f_locals.append([k, serialize_value(val)])
-                    if isinstance(val, (list, tuple, set, dict, collections.deque)) or hasattr(val, '__dict__'):
-                        hid = get_heap_id(val)
-                        if hid not in heap_objects:
-                            heap_objects[hid] = serialize_heap_object(val)
+                if k.startswith('__') or k.startswith('.'):
+                    continue
+                # Tracel's own helpers are injected as globals; they are not the user's variables.
+                if val is TracelModule.Stack or val is TracelModule.Queue:
+                    continue
+                if isinstance(val, type(sys)):
+                    continue
+                f_locals.append([k, serialize_value(val)])
+                if not callable(val) and (isinstance(val, (list, tuple, set, dict, collections.deque)) or hasattr(val, '__dict__')):
+                    hid = get_heap_id(val)
+                    if hid not in heap_objects:
+                        heap_objects[hid] = serialize_heap_object(val)
 
             frames_list.append({
                 "id": f"f{frame_idx}",
@@ -288,6 +294,24 @@ def run_tracel(source_code, stdin_text="", step_limit=5000):
             })
             frame_idx += 1
             f_cursor = f_cursor.f_back
+
+        # Include objects reachable from the locals (node.next.next...), so linked structures render whole.
+        id_to_obj = {heap_cache[k]: o for k, o in kept_alive.items()}
+        pending = list(heap_objects.values())
+        while pending and len(heap_objects) < 200:
+            ho = pending.pop()
+            refs = [v for v in ho.get("items", [])] + [v for _, v in ho.get("fields", [])]
+            refs += [v for e in ho.get("entries", []) for v in e]
+            for ref in refs:
+                rid = ref.get("id") if isinstance(ref, dict) and ref.get("k") == "ref" else None
+                if rid and rid not in heap_objects and rid in id_to_obj:
+                    heap_objects[rid] = serialize_heap_object(id_to_obj[rid])
+                    pending.append(heap_objects[rid])
+
+        # Collected innermost first; the trace lists frames outermost first.
+        frames_list.reverse()
+        for depth, fr in enumerate(frames_list):
+            fr["id"] = f"f{depth}"
 
         # Check loop iterations
         explicit_events = []

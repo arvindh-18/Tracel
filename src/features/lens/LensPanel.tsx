@@ -54,7 +54,16 @@ export const LensPanel: React.FC = () => {
     }
   }
 
-  const heapObjects = Object.values(heap).filter((obj) => visibleHeapIds.has(obj.id));
+  // A node some other node's `next` points at is drawn inside that list, not as a list of its own.
+  const linkedTargets = new Set<string>();
+  for (const obj of Object.values(heap)) {
+    const next = obj.fields?.find(([name]) => name === 'next')?.[1];
+    if (next && (next.k === 'ref' || next.k === 'ptr') && next.id && next.id !== obj.id) linkedTargets.add(next.id);
+  }
+
+  const heapObjects = Object.values(heap).filter(
+    (obj) => visibleHeapIds.has(obj.id) && !(trace.lensHints[obj.id] === 'linked_list' && linkedTargets.has(obj.id))
+  );
 
   const activeError = step.kind === 'exception' ? trace.error : null;
 
