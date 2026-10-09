@@ -225,6 +225,20 @@ export function diffHeapObject(
     }
   }
 
+  // Check entries (dict / map): keys added, changed or removed
+  if (prevObj.entries || nextObj.entries) {
+    const keyText = (v: Value) => JSON.stringify(v);
+    const before = new Map((prevObj.entries ?? []).map(([k, v]) => [keyText(k), v]));
+    const after = new Map((nextObj.entries ?? []).map(([k, v]) => [keyText(k), [k, v] as const]));
+    for (const [text, [key, val]] of after) {
+      const old = before.get(text);
+      if (!old || !valuesEqual(old, val)) events.push({ type: 'entry_set', id: nextObj.id, key, from: old, to: val });
+    }
+    for (const [k] of prevObj.entries ?? []) {
+      if (!after.has(keyText(k))) events.push({ type: 'entry_delete', id: nextObj.id, key: k });
+    }
+  }
+
   // Check fields (struct / instance)
   const prevFields = new Map(prevObj.fields ?? []);
   const nextFields = new Map(nextObj.fields ?? []);

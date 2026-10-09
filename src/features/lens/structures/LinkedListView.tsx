@@ -86,7 +86,7 @@ export const LinkedListView: React.FC<LinkedListViewProps> = ({ obj, allHeap, la
         <span className={own.arrow} aria-hidden>
           →
         </span>
-        <span className={styles.null}>null</span>
+        <span className={cx(styles.null, own.end)}>null</span>
       </div>
     </div>
   );

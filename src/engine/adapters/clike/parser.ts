@@ -10,11 +10,14 @@ export interface TypeInfo {
   unsigned?: boolean;
 }
 
-export const CONTAINERS = new Set(['vector', 'stack', 'queue', 'deque']);
+/** Standard containers: each value is its own block (std::vector, std::map...). */
+export const CONTAINERS = new Set(['vector', 'stack', 'queue', 'deque', 'map', 'unordered_map', 'set', 'unordered_set', 'priority_queue']);
+/** Every standard template the parser reads arguments for. */
+const TEMPLATES = new Set([...CONTAINERS, 'pair', 'greater', 'less']);
 
 export function typeName(t: TypeInfo): string {
   let s = t.unsigned && t.base !== 'size_t' ? `unsigned ${t.base}` : t.base;
-  if (CONTAINERS.has(t.base) || t.base === 'string') s = `std::${s}`;
+  if (TEMPLATES.has(t.base) || t.base === 'string' || t.base === 'function') s = `std::${s}`;
   if (t.args.length) s += `<${t.args.map(typeName).join(', ')}>`;
   return s + '*'.repeat(t.ptr) + (t.ref ? '&' : '');
 }
@@ -41,7 +44,10 @@ export type Expr =
   | { type: 'SizeofType'; line: number; of: TypeInfo }
   | { type: 'New'; line: number; of: TypeInfo; count?: Expr; args?: Expr[] }
   | { type: 'InitList'; line: number; items: Expr[] }
-  | { type: 'Comma'; line: number; items: Expr[] };
+  | { type: 'Comma'; line: number; items: Expr[] }
+  | { type: 'Lambda'; line: number; params: Param[]; body: Stmt & { type: 'Block' } }
+  /** A temporary of a library type: vector<int>(n, 0), pair<int, int>{a, b}, greater<int>() */
+  | { type: 'Construct'; line: number; of: TypeInfo; args: Expr[]; brace: boolean };
 
 export interface Declarator {
   name: string;
@@ -50,6 +56,8 @@ export interface Declarator {
   innerDims?: Expr[]; // further dimensions: int grid[3][4] has arraySize 3, innerDims [4]
   init?: Expr;
   ctorArgs?: Expr[]; // vector<int> v(5, 0)
+  /** Structured binding: auto [key, value] = ... */
+  bindings?: string[];
   line: number;
 }
 
@@ -182,7 +190,7 @@ class Parser {
     while (t.kind === 'id' && QUALIFIERS.has(t.text)) t = this.peek(++offset);
     if (t.kind === 'id' && t.text === 'std' && this.is('::', offset + 1)) t = this.peek((offset += 2));
     if (t.kind !== 'id') return false;
-    return BASE_TYPES.has(t.text) || CONTAINERS.has(t.text) || this.structs.has(t.text) || this.typedefs.has(t.text);
+    return BASE_TYPES.has(t.text) || TEMPLATES.has(t.text) || t.text === 'function' || this.structs.has(t.text) || this.typedefs.has(t.text);
   }
 
   private baseType(): TypeInfo {
@@ -210,10 +218,25 @@ class Parser {
     const typedef = this.typedefs.get(base);
     if (typedef) return { ...typedef, args: [...typedef.args] };
     const t: TypeInfo = { base, args: [], ptr: 0, ref: false, unsigned };
-    if (CONTAINERS.has(base)) {
+    if (base === 'function') {
+      // std::function<int(int, int)>: the signature is not needed to run a lambda.
       this.expect('<');
-      t.args.push(this.fullType());
-      while (this.accept(',')) t.args.push(this.fullType());
+      for (let depth = 1; depth > 0; ) {
+        if (this.is('>>')) {
+          const tk = this.peek();
+          this.tokens.splice(this.pos, 1, { ...tk, text: '>' }, { ...tk, text: '>', col: tk.col + 1 });
+        }
+        const tk = this.next();
+        if (tk.kind === 'eof') throw new CompileError('Unclosed std::function<...>', start.line, start.col);
+        if (tk.text === '<') depth++;
+        else if (tk.text === '>') depth--;
+      }
+    } else if (TEMPLATES.has(base)) {
+      this.expect('<');
+      if (!this.is('>')) {
+        t.args.push(this.fullType());
+        while (this.accept(',')) t.args.push(this.fullType());
+      }
       this.closeAngle();
     } else if (!BASE_TYPES.has(base) && !this.structs.has(base)) {
       throw new CompileError(`Unknown type '${base}'`, start.line, start.col);
@@ -250,8 +273,19 @@ class Parser {
     const type: TypeInfo = { ...base, args: base.args };
     const line = this.peek().line;
     this.pointerSuffix(type);
-    const name = this.ident();
-    const d: Declarator = { name, type, line };
+    let bindings: string[] | undefined;
+    if (this.accept('[')) {
+      bindings = [this.ident()];
+      while (this.accept(',')) bindings.push(this.ident());
+      this.expect(']');
+    }
+    const name = bindings ? `[${bindings.join(', ')}]` : this.ident();
+    const d: Declarator = { name, type, line, bindings };
+    if (bindings) {
+      this.expect('=');
+      d.init = this.assignment();
+      return d;
+    }
     if (this.accept('[')) {
       d.arraySize = this.is(']') ? null : this.expr();
       this.expect(']');
@@ -287,6 +321,15 @@ class Parser {
     while (this.peek().kind !== 'eof') {
       this.checkUnsupported(this.peek());
       if (this.accept(';')) continue;
+      if (this.is('using') && this.peek(1).kind === 'id' && this.is('=', 2)) {
+        // using ll = long long;
+        this.next();
+        const alias = this.ident();
+        this.expect('=');
+        this.typedefs.set(alias, this.fullType());
+        this.expect(';');
+        continue;
+      }
       if (this.is('using')) {
         while (!this.accept(';')) this.next();
         continue;
@@ -564,6 +607,17 @@ class Parser {
       const save = this.pos;
       const type = { ...base };
       this.pointerSuffix(type);
+      if (this.is('[')) {
+        // for (auto& [key, value] : m)
+        this.next();
+        const bindings = [this.ident()];
+        while (this.accept(',')) bindings.push(this.ident());
+        this.expect(']');
+        this.expect(':');
+        const iterable = this.expr();
+        this.expect(')');
+        return { type: 'RangeFor', line, decl: { name: `[${bindings.join(', ')}]`, type, line, bindings }, iterable, body: this.statement() };
+      }
       if (this.peek().kind === 'id' && this.is(':', 1)) {
         const name = this.ident();
         this.expect(':');
@@ -779,6 +833,26 @@ class Parser {
           return { type: 'Call', line, callee: { type: 'Ident', line, name: t.text }, args: items };
         }
         if (t.text === 'std' && this.accept('::')) return this.primary();
+        if (t.text === 'string' && this.is('::')) {
+          this.next();
+          return { type: 'Ident', line, name: this.ident() }; // string::npos
+        }
+        // Library temporaries: vector<int>(n, 0), pair<int, int>(a, b), greater<int>(), string(3, 'x')
+        if ((TEMPLATES.has(t.text) && this.is('<')) || (t.text === 'string' && (this.is('(') || this.is('{')))) {
+          this.pos--;
+          const of = this.fullType();
+          let args: Expr[] = [];
+          const brace = this.is('{');
+          if (brace) args = (this.initList() as Expr & { type: 'InitList' }).items;
+          else {
+            this.expect('(');
+            while (!this.accept(')')) {
+              if (args.length) this.expect(',');
+              args.push(this.assignment());
+            }
+          }
+          return { type: 'Construct', line, of, args, brace };
+        }
         // Functional cast: int(x), double(total)
         if (BASE_TYPES.has(t.text) && this.is('(')) {
           this.next();
@@ -799,7 +873,15 @@ class Parser {
           return this.initList();
         }
         if (t.text === '[') {
-          throw new CompileError("Tracel's C++ engine doesn't support lambdas yet.", t.line, t.col, 'unsupported');
+          // Lambda: [captures](params) mutable -> type { body }. Captures all behave as by reference.
+          while (!this.accept(']')) {
+            if (this.peek().kind === 'eof') throw new CompileError('Unclosed lambda capture list', t.line, t.col);
+            this.next();
+          }
+          const params = this.is('(') ? this.params() : [];
+          this.accept('mutable');
+          if (this.accept('->')) this.fullType();
+          return { type: 'Lambda', line, params, body: this.block() };
         }
     }
     throw new CompileError(t.kind === 'eof' ? 'Unexpected end of file' : `Unexpected '${t.text}'`, t.line, t.col);

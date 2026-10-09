@@ -14,7 +14,8 @@ export interface Token {
 const KNOWN_HEADERS = new Set([
   'stdio.h', 'stdlib.h', 'string.h', 'math.h', 'stdbool.h', 'limits.h', 'stddef.h', 'stdint.h', 'ctype.h', 'time.h',
   'iostream', 'vector', 'stack', 'queue', 'string', 'algorithm', 'cmath', 'cstdio', 'cstdlib', 'cstring', 'climits',
-  'cstddef', 'cstdint', 'iomanip', 'utility', 'bits/stdc++.h',
+  'cstddef', 'cstdint', 'iomanip', 'utility', 'bits/stdc++.h', 'map', 'unordered_map', 'set', 'unordered_set',
+  'deque', 'functional', 'numeric', 'cctype', 'climits', 'cassert', 'assert.h',
 ]);
 
 export class CompileError extends Error {

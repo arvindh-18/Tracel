@@ -406,7 +406,7 @@ int main() {
       ['class A {};\nclass B : public A {};\nint main() { return 0; }\n', 2, /inheritance/],
       ['class A {\n    virtual void f() {}\n};\nint main() { return 0; }\n', 2, /virtual/],
       ['#include "helpers.h"\nint main() { return 0; }\n', 1, /single file/],
-      ['#include <map>\nint main() { return 0; }\n', 1, /doesn't provide <map>/],
+      ['#include <regex>\nint main() { return 0; }\n', 1, /doesn't provide <regex>/],
       ['int main() {\n    asm("nop");\n    return 0;\n}\n', 2, /assembly/],
     ];
     for (const [code, line, message] of cases) {

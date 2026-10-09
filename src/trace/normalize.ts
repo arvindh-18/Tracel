@@ -62,6 +62,9 @@ function heapObjectsEqual(
     if (JSON.stringify(aItems[i]) !== JSON.stringify(bItems[i])) return false;
   }
 
+  // dict / map entries
+  if (JSON.stringify(a.entries ?? []) !== JSON.stringify(b.entries ?? [])) return false;
+
   const aFields = a.fields ?? [];
   const bFields = b.fields ?? [];
   if (aFields.length !== bFields.length) return false;

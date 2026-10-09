@@ -34,6 +34,7 @@ export type HeapKind =
   | 'cpp_stack'
   | 'cpp_queue'
   | 'cpp_deque'
+  | 'cpp_priority_queue'
   | 'pair';
 
 export type LensKind =

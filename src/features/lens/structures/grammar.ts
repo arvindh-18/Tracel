@@ -6,6 +6,29 @@ import { usePlaybackStore } from '../../../store/playback';
 // these keeps unrelated integers (sum, count, x) from posing as pointers.
 const INDEX_NAMES = /^(i|j|k|l|r|lo|hi|mid|left|right|idx|index|start|end|pos|p|q|front|rear|head|tail|top)$/;
 
+const NOT_VARIABLES = new Set(['int', 'len', 'size', 'sizeof', 'true', 'false', 'None', 'True', 'False', 'and', 'or', 'not', 'nullptr', 'NULL']);
+const subscriptCache = new Map<string, Set<string>>();
+
+/**
+ * Variables the program uses inside a subscript (arr[pos], grid[r][c], a[n - 1 - k]),
+ * read from the source. Any integer among them is treated as an index into the
+ * array it shows, whatever its name.
+ */
+export function subscriptNames(source: string | undefined): Set<string> {
+  if (!source) return new Set();
+  let names = subscriptCache.get(source);
+  if (!names) {
+    names = new Set();
+    const code = source.replace(/\/\/.*$|#.*$/gm, '').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""');
+    for (const m of code.matchAll(/(?<=[\w\])])\s*\[([^\[\]]+)\]/g)) {
+      for (const id of m[1]!.match(/[A-Za-z_]\w*/g) ?? []) if (!NOT_VARIABLES.has(id)) names.add(id);
+    }
+    if (subscriptCache.size > 20) subscriptCache.clear();
+    subscriptCache.set(source, names);
+  }
+  return names;
+}
+
 export interface Cursor {
   name: string;
   index: number;
@@ -15,12 +38,12 @@ export interface Cursor {
  * Integer locals of the running (innermost) frame that index into a sequence of `length`,
  * plus pointers in any frame that point at an element of `id`.
  */
-export function indexCursors(frames: Frame[], length: number, id?: HeapId): Cursor[] {
+export function indexCursors(frames: Frame[], length: number, id?: HeapId, usedAsIndex?: Set<string>): Cursor[] {
   const frame = frames[frames.length - 1];
   if (!frame) return [];
   const cursors: Cursor[] = [];
   for (const [name, v] of frame.locals) {
-    if (v.k !== 'int' || !INDEX_NAMES.test(name)) continue;
+    if (v.k !== 'int' || !(INDEX_NAMES.test(name) || usedAsIndex?.has(name))) continue;
     const index = Number(v.v);
     if (Number.isInteger(index) && index >= 0 && index < length) cursors.push({ name, index });
   }
@@ -55,11 +78,12 @@ export function useHistory(): { trace: Trace | null; at: number } {
 }
 
 /** Indices a cursor pointed at in earlier steps of the same run: the lit path. */
-export function visitedIndices(trace: Trace | null, at: number, length: number): Set<number> {
+export function visitedIndices(trace: Trace | null, at: number, length: number, id?: HeapId): Set<number> {
   const seen = new Set<number>();
   if (!trace) return seen;
+  const usedAsIndex = subscriptNames(trace.source);
   for (let s = Math.max(0, at - 2000); s < at; s++) {
-    for (const c of indexCursors(trace.steps[s]!.frames, length)) seen.add(c.index);
+    for (const c of indexCursors(trace.steps[s]!.frames, length, id, usedAsIndex)) seen.add(c.index);
   }
   return seen;
 }

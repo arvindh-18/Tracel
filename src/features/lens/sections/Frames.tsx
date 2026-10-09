@@ -10,10 +10,12 @@ import styles from './Frames.module.css';
 export interface FramesSectionProps {
   frames: Frame[];
   events: TraceEvent[];
+  /** Names on the line being run: those variables are the ones being worked with. */
+  activeNames?: Set<string>;
   onHoverRef?: (heapId: string | null) => void;
 }
 
-export const FramesSection: React.FC<FramesSectionProps> = ({ frames, events, onHoverRef }) => {
+export const FramesSection: React.FC<FramesSectionProps> = ({ frames, events, activeNames, onHoverRef }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   if (frames.length === 0) return null;
@@ -36,7 +38,7 @@ export const FramesSection: React.FC<FramesSectionProps> = ({ frames, events, on
           const name = (
             <>
               <span className={styles.name}>{frame.name}</span>
-              <span className={styles.meta}>line {frame.line}</span>
+              {frame.line > 0 && <span className={styles.meta}>line {frame.line}</span>}
             </>
           );
 
@@ -67,7 +69,7 @@ export const FramesSection: React.FC<FramesSectionProps> = ({ frames, events, on
                 ) : (
                   <div className={styles.locals}>
                     {frame.locals.map(([varName, val]) => (
-                      <React.Fragment key={varName}>
+                      <span key={varName} className={cx(styles.local, isTop && activeNames?.has(varName) && styles.active)}>
                         <span className={styles.varName}>{varName}</span>
                         <span
                           className={cx(
@@ -78,7 +80,7 @@ export const FramesSection: React.FC<FramesSectionProps> = ({ frames, events, on
                         >
                           <ValueCell value={val} onHoverRef={onHoverRef} />
                         </span>
-                      </React.Fragment>
+                      </span>
                     ))}
                   </div>
                 ))}

@@ -1,0 +1,83 @@
+.scroll {
+  overflow-x: auto;
+  padding-bottom: var(--sp-4);
+}
+
+.canvas {
+  position: relative;
+}
+
+.edges {
+  position: absolute;
+  inset: 0;
+}
+
+.edge {
+  stroke: var(--line-2);
+  stroke-width: 1.5;
+}
+
+.edgeLit {
+  stroke: var(--sem-ref);
+}
+
+.node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transform: translate(-50%, calc(-50% - 10px));
+}
+
+.markers {
+  display: flex;
+  gap: var(--sp-4);
+  height: 16px;
+}
+
+.circle {
+  min-width: 40px;
+  height: 40px;
+  padding: 0 var(--sp-8);
+  border-radius: 20px;
+}
+
+.toggle {
+  display: inline-flex;
+  margin-left: var(--sp-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-cell);
+  overflow: hidden;
+}
+
+.toggle button {
+  padding: 0 var(--sp-8);
+  height: 20px;
+  color: var(--text-2);
+  background: none;
+  border: 0;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+
+.toggle button[aria-pressed='true'] {
+  color: var(--text-1);
+  background-color: var(--bg-hover);
+  font-weight: 600;
+}
+
+/* State tints are translucent; a solid backing keeps edges from showing through. */
+.circle {
+  position: relative;
+  isolation: isolate;
+}
+
+.circle::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background-color: var(--bg-raised);
+}

@@ -207,3 +207,23 @@
 .leaving {
   pointer-events: none;
 }
+
+/* A pushed cell sends out one ring as it lands. */
+.pushPulse {
+  animation: push-pulse 650ms ease-out 120ms;
+}
+
+@keyframes push-pulse {
+  from {
+    box-shadow: 0 0 0 0 var(--sem-create);
+  }
+  to {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pushPulse {
+    animation: none;
+  }
+}

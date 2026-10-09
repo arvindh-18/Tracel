@@ -17,7 +17,7 @@ export interface ExecOptions {
 // containers keep their items. Pointers are (block, offset) pairs, so &x,
 // array decay, pointer arithmetic and new/delete all share one model.
 
-type BlockKind = 'scalar' | 'array' | 'struct' | 'vector' | 'cpp_stack' | 'cpp_queue';
+type BlockKind = 'scalar' | 'array' | 'struct' | 'vector' | 'cpp_stack' | 'cpp_queue' | 'deque' | 'map' | 'set' | 'pq';
 
 interface Block {
   id: string;
@@ -27,6 +27,13 @@ interface Block {
   struct?: StructDef;
   items: RV[];
   fields: Map<string, RV>;
+  /** std::map / std::unordered_map entries; kept sorted by key for std::map. */
+  entries: { k: RV; v: RV }[];
+  valType?: TypeInfo; // map value type
+  ordered?: boolean; // std::map / std::set keep keys sorted
+  /** priority_queue order: greater<T> makes a min-heap; a comparator overrides both. */
+  minHeap?: boolean;
+  cmp?: RV;
   freed: boolean;
   dead: boolean; // stack storage whose scope has ended
   addr: number;
@@ -44,9 +51,18 @@ type RV =
   | { t: 'uninit'; ty: TypeInfo }
   | { t: 'void' }
   | { t: 'stream'; name: 'cout' | 'cin' | 'cerr' }
-  | { t: 'manip'; name: string; arg?: number };
+  | { t: 'manip'; name: string; arg?: number }
+  | { t: 'fn'; fn: FunctionDef; closure: Scope[]; self?: Block } // lambda or function used as a value
+  | { t: 'iter'; b: Block; o: number } // map/set iterator: position in entries/items
+  | { t: 'siter'; lv: LV; o: number } // std::string iterator
+  | { t: 'cmp'; greater: boolean }; // std::greater<T>() / std::less<T>()
 
-type LV = { b: Block; i: number; name?: string; indexName?: string } | { b: Block; f: string; name?: string } | { b: Block; whole: true; name?: string };
+type LV =
+  | { b: Block; i: number; name?: string; indexName?: string }
+  | { b: Block; f: string; name?: string }
+  | { b: Block; whole: true; name?: string }
+  | { b: Block; key: string; name?: string } // a map entry's value: m[key]
+  | { b: Block; strOf: LV; i: number; name?: string }; // one character of a std::string
 
 interface Scope {
   vars: Map<string, LV>;
@@ -61,6 +77,9 @@ interface CallFrame {
   returnValue?: RV;
   /** The object a member function runs on. */
   self?: Block;
+  /** A lambda's enclosing scopes, searched after its own (captures behave as by reference). */
+  closure?: Scope[];
+  returnType?: TypeInfo;
 }
 
 class RuntimeErr extends Error {
@@ -188,7 +207,15 @@ class Interpreter {
       for (const g of this.program.globals) this.execDecl(g as Stmt & { type: 'Decl' }, this.globals, 'static');
       const main = this.program.functions.get('main');
       if (!main) {
-        throw new RuntimeErr('NoMain', 'No main function', 'This program has no main() function, so there is nothing to run.', 'C and C++ programs start running at main(). Add an int main() { ... } function.');
+        const solution = this.program.structs.get('Solution');
+        throw new RuntimeErr(
+          'NoMain',
+          'No main function',
+          'This program has no main() function, so there is nothing to run.',
+          solution
+            ? 'LeetCode solutions have no main(). Add one that builds an example input and calls your method, e.g. int main() { Solution s; vector<int> nums = {2, 7, 11, 15}; s.twoSum(nums, 9); }'
+            : 'C and C++ programs start running at main(). Add an int main() { ... } function.'
+        );
       }
       this.callFunction(main, [], main.line);
       return done('completed');
@@ -280,6 +307,13 @@ class Interpreter {
   private lvToValue(lv: LV): Value {
     if ('whole' in lv) return { k: lv.b.kind === 'array' || lv.b.kind === 'struct' ? 'inline' : 'ref', id: lv.b.id };
     if (lv.b.dead || lv.b.freed) return { k: 'uninit', t: typeName(lv.b.elemType) };
+    if ('key' in lv || 'strOf' in lv) {
+      try {
+        return this.toValue(this.read(lv), lv.b.valType ?? lv.b.elemType);
+      } catch {
+        return { k: 'uninit', t: '?' };
+      }
+    }
     if ('f' in lv) return this.toValue(lv.b.fields.get(lv.f)!, this.fieldType(lv.b, lv.f));
     return this.toValue(lv.b.items[lv.i] ?? { t: 'uninit', ty: lv.b.elemType }, lv.b.elemType);
   }
@@ -309,6 +343,14 @@ class Interpreter {
         return { k: rv.b.kind === 'array' || rv.b.kind === 'struct' ? 'inline' : 'ref', id: rv.b.id };
       case 'uninit':
         return { k: 'uninit', t: typeName(rv.ty) };
+      case 'fn':
+        return { k: 'fn', name: rv.fn.name };
+      case 'cmp':
+        return { k: 'fn', name: rv.greater ? 'greater' : 'less' };
+      case 'iter':
+        return { k: 'ptr', id: rv.b.id, offset: rv.o, t: 'iterator', address: `${this.hex(rv.b.addr)}+${rv.o}` };
+      case 'siter':
+        return { k: 'int', v: String(rv.o) };
       default:
         return { k: 'uninit', t: typeName(ty) };
     }
@@ -331,6 +373,19 @@ class Interpreter {
         return { ...base, kind: 'cpp_stack', typeName: `std::stack<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
       case 'cpp_queue':
         return { ...base, kind: 'cpp_queue', typeName: `std::queue<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
+      case 'deque':
+        return { ...base, kind: 'cpp_deque', typeName: `std::deque<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
+      case 'set':
+        return { ...base, kind: 'set', typeName: `std::${b.ordered ? 'set' : 'unordered_set'}<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
+      case 'pq':
+        return { ...base, kind: 'cpp_priority_queue', typeName: `std::priority_queue<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
+      case 'map':
+        return {
+          ...base,
+          kind: 'dict',
+          typeName: `std::${b.ordered ? 'map' : 'unordered_map'}<${elem}, ${typeName(b.valType ?? INT_TYPE)}>`,
+          entries: b.entries.map((e) => [this.toValue(e.k, b.elemType), this.toValue(e.v, b.valType ?? INT_TYPE)] as [Value, Value]),
+        };
       default:
         return {
           ...base,
@@ -366,7 +421,7 @@ class Interpreter {
       this.nextStack -= Math.max(8, Math.ceil(bytes / 8) * 8);
       addr = this.nextStack;
     }
-    const b: Block = { id, kind, region, elemType, struct, items, fields: new Map(), freed: false, dead: false, addr };
+    const b: Block = { id, kind, region, elemType, struct, items, fields: new Map(), entries: [], freed: false, dead: false, addr };
     this.blocks.set(id, b);
     return b;
   }
@@ -387,12 +442,24 @@ class Interpreter {
     if (type.ptr) return zero ? { t: 'ptr', b: null, o: 0, ty: this.pointee(type) } : { t: 'uninit', ty: type };
     if (type.base === 'string') return { t: 'str', v: '' };
     if (CONTAINERS.has(type.base)) {
-      const kind: BlockKind = type.base === 'stack' ? 'cpp_stack' : type.base === 'queue' ? 'cpp_queue' : 'vector';
-      const b = this.alloc(kind, 'heap', type.args[0] ?? INT_TYPE);
+      const kinds: Record<string, BlockKind> = {
+        stack: 'cpp_stack',
+        queue: 'cpp_queue',
+        deque: 'deque',
+        map: 'map',
+        unordered_map: 'map',
+        set: 'set',
+        unordered_set: 'set',
+        priority_queue: 'pq',
+      };
+      const b = this.alloc(kinds[type.base] ?? 'vector', 'heap', type.args[0] ?? INT_TYPE);
+      if (b.kind === 'map') b.valType = type.args[1] ?? INT_TYPE;
+      b.ordered = type.base === 'map' || type.base === 'set';
+      if (b.kind === 'pq') b.minHeap = type.args[2]?.base === 'greater';
       owner?.push(b);
       return { t: 'agg', b };
     }
-    const def = this.program.structs.get(type.base);
+    const def = this.structOf(type);
     if (def) {
       const b = this.alloc('struct', region, type, [], def);
       owner?.push(b);
@@ -423,6 +490,243 @@ class Interpreter {
     return b;
   }
 
+  private pairDefs = new Map<string, StructDef>();
+
+  /** A user struct/class, or the built-in std::pair<A, B> (first, second). */
+  private structOf(type: TypeInfo): StructDef | undefined {
+    if (type.ptr) return undefined;
+    if (type.base !== 'pair') return this.program.structs.get(type.base);
+    const [a = INT_TYPE, b = INT_TYPE] = type.args;
+    const name = `pair<${typeName(a)}, ${typeName(b)}>`;
+    let def = this.pairDefs.get(name);
+    if (!def) {
+      def = { name, fields: [{ name: 'first', type: a }, { name: 'second', type: b }], methods: new Map() };
+      this.pairDefs.set(name, def);
+    }
+    return def;
+  }
+
+  /** A stable string for comparing keys and values (map keys, set members, ==). */
+  private keyOf(v: RV): string {
+    switch (v.t) {
+      case 'int':
+      case 'float':
+      case 'char':
+        return `n:${v.v}`;
+      case 'long':
+        return `n:${v.v}`;
+      case 'bool':
+        return `n:${v.v ? 1 : 0}`;
+      case 'str':
+        return `s:${v.v}`;
+      case 'ptr':
+        return `p:${v.b?.id ?? 'null'}+${v.o}`;
+      case 'agg':
+        return v.b.kind === 'struct'
+          ? `{${[...v.b.fields.values()].map((f) => this.keyOf(f)).join(',')}}`
+          : `[${v.b.items.map((x) => this.keyOf(x)).join(',')}]`;
+      default:
+        return `?:${v.t}`;
+    }
+  }
+
+  /** Orders values the way C++'s < does: numbers, strings, then pairs and vectors element by element. */
+  private compareRV(a: RV, b: RV): number {
+    if (a.t === 'str' || b.t === 'str') {
+      const x = a.t === 'str' ? a.v : String.fromCharCode(this.toNum(a));
+      const y = b.t === 'str' ? b.v : String.fromCharCode(this.toNum(b));
+      return x < y ? -1 : x > y ? 1 : 0;
+    }
+    if (a.t === 'agg' && b.t === 'agg') {
+      const xs = a.b.kind === 'struct' ? [...a.b.fields.values()] : a.b.items;
+      const ys = b.b.kind === 'struct' ? [...b.b.fields.values()] : b.b.items;
+      for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+        const c = this.compareRV(xs[i]!, ys[i]!);
+        if (c) return c;
+      }
+      return xs.length - ys.length;
+    }
+    if (a.t === 'long' || b.t === 'long') {
+      const x = this.toBig(a);
+      const y = this.toBig(b);
+      return x < y ? -1 : x > y ? 1 : 0;
+    }
+    return this.toNum(a) - this.toNum(b);
+  }
+
+  /** Strict weak ordering for sort/priority_queue: a comparator function, greater/less, or <. */
+  private lessThan(a: RV, b: RV, cmp?: RV): boolean {
+    if (cmp?.t === 'fn') return this.truthy(this.callFunction(cmp.fn, [a, b], this.currentLine(), cmp.self, cmp.closure));
+    if (cmp?.t === 'cmp' && cmp.greater) return this.compareRV(a, b) > 0;
+    return this.compareRV(a, b) < 0;
+  }
+
+  /** Evaluates `e` as a value of `type`; a { ... } list builds that type. */
+  private evalAs(e: Expr, type: TypeInfo, owner: Block[] | null = this.ownerList()): RV {
+    if (e.type !== 'InitList') return this.evalR(e);
+    const v = this.makeDefault(type, type.ptr ? 'stack' : 'heap', owner, true);
+    if (v.t === 'agg') {
+      this.fillFromList(v.b, e.items);
+      return v;
+    }
+    return e.items[0] ? this.coerce(this.evalR(e.items[0]), type) : v;
+  }
+
+  /** Stores a value in a container slot: containers and structs are copied (value semantics). */
+  private stored(v: RV, type: TypeInfo): RV {
+    return v.t === 'agg' ? { t: 'agg', b: this.copyAgg(v.b, 'heap', null) } : this.coerce(v, type);
+  }
+
+  private mapFind(b: Block, key: string): number {
+    return b.entries.findIndex((e) => this.keyOf(e.k) === key);
+  }
+
+  /** Inserts (or, with overwrite, replaces) a map entry, keeping std::map sorted. */
+  private mapPut(b: Block, k: RV, v: RV, overwrite: boolean): number {
+    const key = this.stored(k, b.elemType);
+    const at = this.mapFind(b, this.keyOf(key));
+    if (at >= 0) {
+      if (overwrite) b.entries[at]!.v = this.stored(v, b.valType ?? INT_TYPE);
+      return at;
+    }
+    const entry = { k: key, v: this.stored(v, b.valType ?? INT_TYPE) };
+    if (!b.ordered) return b.entries.push(entry) - 1;
+    let i = 0;
+    while (i < b.entries.length && this.compareRV(b.entries[i]!.k, key) < 0) i++;
+    b.entries.splice(i, 0, entry);
+    return i;
+  }
+
+  private setPut(b: Block, v: RV): boolean {
+    const item = this.stored(v, b.elemType);
+    const key = this.keyOf(item);
+    if (b.items.some((x) => this.keyOf(x) === key)) return false;
+    if (!b.ordered) b.items.push(item);
+    else {
+      let i = 0;
+      while (i < b.items.length && this.compareRV(b.items[i]!, item) < 0) i++;
+      b.items.splice(i, 0, item);
+    }
+    return true;
+  }
+
+  /** priority_queue as a real binary heap, so the Tree layout shows its shape. */
+  private pqBefore(b: Block, x: RV, y: RV): boolean {
+    // True when x should sit above y. The default (less) gives a max-heap.
+    if (b.cmp) return this.lessThan(y, x, b.cmp);
+    return b.minHeap ? this.compareRV(x, y) < 0 : this.compareRV(x, y) > 0;
+  }
+
+  private pqPush(b: Block, v: RV) {
+    const h = b.items;
+    h.push(this.stored(v, b.elemType));
+    for (let i = h.length - 1; i > 0; ) {
+      const parent = (i - 1) >> 1;
+      if (!this.pqBefore(b, h[i]!, h[parent]!)) break;
+      [h[i], h[parent]] = [h[parent]!, h[i]!];
+      i = parent;
+    }
+  }
+
+  private pqPop(b: Block) {
+    const h = b.items;
+    const last = h.pop()!;
+    if (!h.length) return;
+    h[0] = last;
+    for (let i = 0; ; ) {
+      const l = 2 * i + 1;
+      const r = l + 1;
+      let best = i;
+      if (l < h.length && this.pqBefore(b, h[l]!, h[best]!)) best = l;
+      if (r < h.length && this.pqBefore(b, h[r]!, h[best]!)) best = r;
+      if (best === i) break;
+      [h[i], h[best]] = [h[best]!, h[i]!];
+      i = best;
+    }
+  }
+
+  /** Builds a library temporary: vector<int>(n, 0), pair<int,int>(a, b), string(3, 'x'), greater<int>(). */
+  private constructTemp(type: TypeInfo, argExprs: Expr[], brace: boolean): RV {
+    if (type.base === 'greater' || type.base === 'less') return { t: 'cmp', greater: type.base === 'greater' };
+    if (type.base === 'string') {
+      const args = argExprs.map((a) => this.evalR(a));
+      if (args.length === 2) return { t: 'str', v: String.fromCharCode(this.toNum(args[1]!)).repeat(Math.max(0, this.toNum(args[0]!))) };
+      if (brace) return { t: 'str', v: args.map((c) => String.fromCharCode(this.toNum(c))).join('') };
+      return args[0]?.t === 'str' ? args[0] : { t: 'str', v: '' };
+    }
+    const v = this.makeDefault(type, 'stack', this.ownerList(), true);
+    if (v.t !== 'agg') return argExprs[0] ? this.coerce(this.evalR(argExprs[0]), type) : v;
+    if (brace || v.b.kind === 'struct') this.fillFromList(v.b, argExprs);
+    else this.applyCtorArgs(v.b, argExprs);
+    return v;
+  }
+
+  /** Constructor arguments for library containers: (n), (n, fill), (other), (first, last), (comparator). */
+  private applyCtorArgs(b: Block, argExprs: Expr[]) {
+    if (!argExprs.length) return;
+    const args = argExprs.map((a) => this.evalR(a));
+    const [a0, a1] = args;
+    if (a0?.t === 'agg') {
+      const copy = this.copyAgg(a0.b, b.region, null);
+      this.blocks.delete(copy.id);
+      if (b.kind === 'pq') copy.items.forEach((x) => this.pqPush(b, x));
+      else if (b.kind === 'set') copy.items.forEach((x) => this.setPut(b, x));
+      else {
+        b.items = copy.items;
+        b.entries = copy.entries;
+      }
+      return;
+    }
+    if (a0?.t === 'ptr' && a1?.t === 'ptr' && a0.b && a0.b === a1.b) {
+      const slice = a0.b.items.slice(a0.o, a1.o);
+      if (b.kind === 'pq') slice.forEach((x) => this.pqPush(b, x));
+      else if (b.kind === 'set') slice.forEach((x) => this.setPut(b, x));
+      else b.items = slice.map((x) => this.stored(x, b.elemType));
+      return;
+    }
+    if (a0?.t === 'fn' || a0?.t === 'cmp') {
+      b.cmp = a0;
+      return;
+    }
+    if (b.kind === 'vector' || b.kind === 'deque') {
+      const n = this.toNum(a0!);
+      b.items = Array.from({ length: n }, () => (a1 ? this.stored(a1, b.elemType) : this.makeDefault(b.elemType, 'heap', null, true)));
+      return;
+    }
+    throw new RuntimeErr('Unsupported', 'Unsupported feature', `This constructor form isn't supported for ${typeName(b.elemType)} containers yet.`);
+  }
+
+  /** A throwaway pair block (not shown in the heap). */
+  private pairOf(first: RV, second: RV): Block {
+    const b = (this.makeDefault({ ...INT_TYPE, base: 'pair', args: [this.typeOfValue(first), this.typeOfValue(second)] }, 'stack', null) as RV & { t: 'agg' }).b;
+    this.blocks.delete(b.id);
+    b.fields.set('first', first);
+    b.fields.set('second', second);
+    return b;
+  }
+
+  /** auto [a, b] = value: binds names to a pair/struct's fields or an array's items. */
+  private bindNames(names: string[], v: RV, scope: Scope, byRef: boolean) {
+    if (v.t !== 'agg') throw new RuntimeErr('TypeError', 'Invalid structured binding', 'A structured binding needs a pair, struct or array on the right.');
+    const parts: LV[] =
+      v.b.kind === 'struct' ? [...v.b.fields.keys()].map((f) => ({ b: v.b, f })) : v.b.items.map((_, i) => ({ b: v.b, i }));
+    names.forEach((name, i) => {
+      const part = parts[i];
+      if (!part) throw new RuntimeErr('TypeError', 'Invalid structured binding', `There is no element ${i} to bind to '${name}'.`);
+      if (byRef) {
+        scope.vars.set(name, part);
+        return;
+      }
+      const value = this.read(part);
+      if (value.t === 'agg') scope.vars.set(name, { b: this.copyAgg(value.b, 'stack', scope.owned), whole: true });
+      else {
+        const cell = this.alloc('scalar', 'stack', this.typeOfValue(value), [value], undefined, name);
+        scope.owned.push(cell);
+        scope.vars.set(name, { b: cell, i: 0 });
+      }
+    });
+  }
+
   private pointee(t: TypeInfo): TypeInfo {
     return { ...t, ptr: Math.max(0, t.ptr - 1), ref: false };
   }
@@ -432,6 +736,11 @@ class Interpreter {
     const items = src.items.map((v) => (v.t === 'agg' ? ({ t: 'agg', b: this.copyAgg(v.b, region, owner) } as RV) : v));
     const b = this.alloc(src.kind, src.kind === 'array' || src.kind === 'struct' ? region : 'heap', src.elemType, items, src.struct);
     for (const [f, v] of src.fields) b.fields.set(f, v.t === 'agg' ? { t: 'agg', b: this.copyAgg(v.b, region, owner) } : v);
+    b.entries = src.entries.map((e) => ({ k: e.k, v: e.v.t === 'agg' ? ({ t: 'agg', b: this.copyAgg(e.v.b, region, owner) } as RV) : e.v }));
+    b.valType = src.valType;
+    b.ordered = src.ordered;
+    b.minHeap = src.minHeap;
+    b.cmp = src.cmp;
     owner?.push(b);
     return b;
   }
@@ -445,6 +754,17 @@ class Interpreter {
 
   private read(lv: LV): RV {
     this.checkAlive(lv.b, lv.name);
+    if ('strOf' in lv) {
+      const s = this.read(lv.strOf);
+      if (s.t !== 'str') throw new RuntimeErr('TypeError', 'Not a string', 'Only strings can be indexed this way.');
+      this.checkBounds(s.v.length, lv.i, lv.name);
+      return { t: 'char', v: s.v.charCodeAt(lv.i) };
+    }
+    if ('key' in lv) {
+      const at = this.mapFind(lv.b, lv.key);
+      if (at < 0) throw new RuntimeErr('OutOfRange', 'Key not found', `${lv.name ? `'${lv.name}'` : 'The map'} has no entry for this key.`, 'at() and iterators need the key to exist. Check count() or find() first.');
+      return lv.b.entries[at]!.v;
+    }
     if ('whole' in lv) return { t: 'agg', b: lv.b };
     if ('f' in lv) {
       if (!lv.b.fields.has(lv.f)) throw new RuntimeErr('UnknownField', 'Unknown field', `'${lv.b.struct?.name}' has no field named '${lv.f}'.`);
@@ -456,6 +776,22 @@ class Interpreter {
 
   private write(lv: LV, value: RV) {
     this.checkAlive(lv.b, lv.name);
+    if ('strOf' in lv) {
+      const s = this.read(lv.strOf);
+      if (s.t !== 'str') throw new RuntimeErr('TypeError', 'Not a string', 'Only strings can be indexed this way.');
+      this.checkBounds(s.v.length, lv.i, lv.name);
+      const ch = String.fromCharCode(this.toNum(value));
+      this.write(lv.strOf, { t: 'str', v: s.v.slice(0, lv.i) + ch + s.v.slice(lv.i + 1) });
+      return;
+    }
+    if ('key' in lv) {
+      const at = this.mapFind(lv.b, lv.key);
+      const entry = lv.b.entries[at];
+      if (!entry) throw new RuntimeErr('OutOfRange', 'Key not found', 'The map has no entry for this key.');
+      if (entry.v.t === 'agg') this.assignAgg(entry.v.b, value);
+      else entry.v = this.coerce(value, lv.b.valType ?? INT_TYPE);
+      return;
+    }
     if ('whole' in lv) {
       this.assignAgg(lv.b, value);
       return;
@@ -480,6 +816,7 @@ class Interpreter {
       this.blocks.delete(copy.id);
       dst.items = copy.items;
       dst.fields = copy.fields;
+      dst.entries = copy.entries;
       return;
     }
     if (value.t === 'void' && dst.kind !== 'struct') return;
@@ -518,6 +855,10 @@ class Interpreter {
         const lv = frame.scopes[s]!.vars.get(name);
         if (lv) return lv;
       }
+      for (let s = (frame.closure?.length ?? 0) - 1; s >= 0; s--) {
+        const lv = frame.closure![s]!.vars.get(name);
+        if (lv) return lv;
+      }
     }
     return this.globals.vars.get(name);
   }
@@ -531,8 +872,19 @@ class Interpreter {
       }
       case 'Index': {
         const obj = this.evalR(e.object);
-        const i = this.toNum(this.evalR(e.index));
         const name = this.exprName(e.object);
+        if (obj.t === 'agg' && obj.b.kind === 'map') {
+          // m[key] inserts a default value when the key is missing, like C++.
+          const key = this.coerce(this.evalAs(e.index, obj.b.elemType), obj.b.elemType);
+          let at = this.mapFind(obj.b, this.keyOf(key));
+          if (at < 0) at = this.mapPut(obj.b, key, this.makeDefault(obj.b.valType ?? INT_TYPE, 'heap', null, true), false);
+          return { b: obj.b, key: this.keyOf(obj.b.entries[at]!.k), name };
+        }
+        const i = this.toNum(this.evalR(e.index));
+        if (obj.t === 'str' && this.isLValue(e.object)) {
+          const base = this.evalL(e.object);
+          return { b: base.b, strOf: base, i, name };
+        }
         const indexName = e.index.type === 'Num' ? undefined : (this.exprName(e.index) ?? 'index');
         if (obj.t === 'agg') return { b: obj.b, i, name, indexName };
         if (obj.t === 'ptr') return { b: this.deref(obj, name), i: obj.o + i, name, indexName };
@@ -544,6 +896,7 @@ class Interpreter {
         let b: Block;
         if (e.arrow) {
           const p = this.evalR(e.object);
+          if (p.t === 'iter') return this.iterMember(p, e.name);
           if (p.t !== 'ptr') throw new RuntimeErr('TypeError', 'Not a pointer', `'->' needs a pointer, but ${name ?? 'this'} is not one.`);
           b = this.deref(p, name);
         } else {
@@ -558,6 +911,16 @@ class Interpreter {
         if (e.op === '*') {
           const name = this.exprName(e.arg);
           const p = this.evalR(e.arg);
+          if (p.t === 'siter') return { b: p.lv.b, strOf: p.lv, i: p.o };
+          if (p.t === 'iter') {
+            if (p.b.kind === 'set') return { b: p.b, i: p.o, name };
+            const entry = p.b.entries[p.o];
+            if (!entry) throw new RuntimeErr('OutOfRange', 'Invalid iterator', 'This iterator is end(), so it has no element.');
+            const pair = (this.makeDefault({ ...INT_TYPE, base: 'pair', args: [p.b.elemType, p.b.valType ?? INT_TYPE] }, 'stack', this.ownerList()) as RV & { t: 'agg' }).b;
+            pair.fields.set('first', entry.k);
+            pair.fields.set('second', entry.v);
+            return { b: pair, whole: true };
+          }
           if (p.t !== 'ptr') throw new RuntimeErr('TypeError', 'Not a pointer', `Only pointers can be dereferenced with *.`);
           const b = this.deref(p, name);
           return b.kind === 'struct' ? { b, whole: true, name } : { b, i: p.o, name: name ? `*${name}` : undefined };
@@ -570,6 +933,19 @@ class Interpreter {
       }
     }
     throw new RuntimeErr('TypeError', 'Not assignable', 'The left side of this assignment is not something that can be assigned to.');
+  }
+
+  /** it->first / it->second on a map iterator. */
+  private iterMember(it: RV & { t: 'iter' }, field: string): LV {
+    const entry = it.b.entries[it.o];
+    if (it.b.kind !== 'map' || !entry) {
+      throw new RuntimeErr('OutOfRange', 'Invalid iterator', 'This iterator is end() or not a map iterator, so it has no element.', 'Compare an iterator with end() before using it.');
+    }
+    if (field === 'second') return { b: it.b, key: this.keyOf(entry.k) };
+    if (field !== 'first') throw new RuntimeErr('TypeError', 'Unknown member', `Map elements have first and second, not ${field}.`);
+    const cell = this.alloc('scalar', 'stack', it.b.elemType, [entry.k]);
+    this.ownerList().push(cell);
+    return { b: cell, i: 0 };
   }
 
   /** Inside a member function, a bare field name means this->field. */
@@ -640,12 +1016,12 @@ class Interpreter {
 
   private truthy(v: RV): boolean {
     if (v.t === 'ptr') return v.b !== null;
-    if (v.t === 'str' || v.t === 'agg' || v.t === 'stream') return true;
+    if (v.t === 'str' || v.t === 'agg' || v.t === 'stream' || v.t === 'fn' || v.t === 'cmp') return true;
     return this.toNum(v) !== 0;
   }
 
   private coerce(v: RV, ty: TypeInfo): RV {
-    if (v.t === 'uninit' || v.t === 'agg' || v.t === 'void' || v.t === 'stream' || v.t === 'manip') return v;
+    if (v.t === 'uninit' || v.t === 'agg' || v.t === 'void' || v.t === 'stream' || v.t === 'manip' || v.t === 'fn' || v.t === 'iter' || v.t === 'siter' || v.t === 'cmp') return v;
     if (ty.ptr) {
       if (v.t === 'ptr') return { ...v, ty: this.pointee(ty) };
       if (v.t === 'str' && ty.base === 'char') return v;
@@ -698,6 +1074,11 @@ class Interpreter {
         if (['endl', 'fixed', 'boolalpha'].includes(e.name) && !this.lookup(e.name)) return { t: 'manip', name: e.name };
         if (e.name === 'INT_MAX') return { t: 'int', v: 2147483647 };
         if (e.name === 'INT_MIN') return { t: 'int', v: -2147483648 };
+        if (e.name === 'npos' && !this.lookup(e.name)) return { t: 'int', v: -1 };
+        if (!this.lookup(e.name) && !this.memberOfSelf(e.name)) {
+          const fn = this.program.functions.get(e.name);
+          if (fn) return { t: 'fn', fn, closure: [] }; // a function passed as a comparator
+        }
         if (e.name === 'LLONG_MAX') return { t: 'long', v: 9223372036854775807n };
         if (e.name === 'LLONG_MIN') return { t: 'long', v: -9223372036854775808n };
         const lv = this.evalL(e);
@@ -729,7 +1110,7 @@ class Interpreter {
         const old = this.read(lv);
         if (old.t === 'uninit') throw this.uninitError(lv.name);
         const delta = e.op === '++' ? 1 : -1;
-        const next = old.t === 'ptr' ? { ...old, o: old.o + delta } : this.arith('+', old, { t: 'int', v: delta });
+        const next = old.t === 'ptr' || old.t === 'iter' || old.t === 'siter' ? { ...old, o: old.o + delta } : this.arith('+', old, { t: 'int', v: delta });
         this.write(lv, next);
         return e.prefix ? this.read(lv) : old;
       }
@@ -765,6 +1146,13 @@ class Interpreter {
       }
       case 'InitList':
         throw new RuntimeErr('TypeError', 'Unexpected initializer list', 'A { ... } list can only be used to initialize a variable.');
+      case 'Lambda': {
+        const frame = this.stack[this.stack.length - 1];
+        const fn: FunctionDef = { name: 'lambda', returnType: { ...INT_TYPE, base: 'auto' }, params: e.params, body: e.body, line: e.line };
+        return { t: 'fn', fn, closure: frame ? [...(frame.closure ?? []), ...frame.scopes] : [], self: frame?.self };
+      }
+      case 'Construct':
+        return this.constructTemp(e.of, e.args, e.brace);
     }
   }
 
@@ -773,6 +1161,7 @@ class Interpreter {
       case '&': {
         const lv = this.evalL(e.arg);
         if ('whole' in lv) return { t: 'ptr', b: lv.b, o: 0, ty: lv.b.kind === 'struct' ? { ...INT_TYPE, base: lv.b.struct!.name } : lv.b.elemType };
+        if ('key' in lv || 'strOf' in lv) throw new RuntimeErr('Unsupported', 'Unsupported feature', 'Taking the address of a map value or string character is not supported yet.');
         if ('f' in lv) {
           const fv = lv.b.fields.get(lv.f);
           if (fv?.t === 'agg') return { t: 'ptr', b: fv.b, o: 0, ty: fv.b.elemType };
@@ -818,6 +1207,19 @@ class Interpreter {
   }
 
   private arith(op: string, a: RV, b: RV): RV {
+    if ((a.t === 'iter' || a.t === 'siter') && (b.t === 'iter' || b.t === 'siter')) {
+      const same = (a.t === 'iter' ? a.b : a.lv.b) === (b.t === 'iter' ? b.b : b.lv.b);
+      if (op === '==') return { t: 'bool', v: same && a.o === b.o };
+      if (op === '!=') return { t: 'bool', v: !(same && a.o === b.o) };
+      if (op === '-') return { t: 'int', v: a.o - b.o };
+    }
+    if ((a.t === 'iter' || a.t === 'siter') && (op === '+' || op === '-')) return { ...a, o: a.o + (op === '+' ? 1 : -1) * this.toNum(b) };
+    if (a.t === 'agg' && b.t === 'agg' && (a.b.kind !== 'array' || b.b.kind !== 'array')) {
+      // pairs, vectors and strings-of-structs compare element by element
+      const c = this.compareRV(a, b);
+      const results: Record<string, boolean> = { '<': c < 0, '>': c > 0, '<=': c <= 0, '>=': c >= 0, '==': c === 0, '!=': c !== 0 };
+      if (op in results) return { t: 'bool', v: results[op]! };
+    }
     // Pointers: arithmetic moves the offset; comparison uses identity.
     if (a.t === 'agg' && a.b.kind === 'array') a = { t: 'ptr', b: a.b, o: 0, ty: a.b.elemType };
     if (b.t === 'agg' && b.b.kind === 'array') b = { t: 'ptr', b: b.b, o: 0, ty: b.b.elemType };
@@ -1062,6 +1464,23 @@ class Interpreter {
       for (let i = 0; i < b.items.length; i++) b.items[i] = i < items.length ? val(items[i]!, b.elemType) : this.makeDefault(b.elemType, b.region, null, true);
       return;
     }
+    if (b.kind === 'map') {
+      b.entries = [];
+      for (const it of items) {
+        if (it.type !== 'InitList' || it.items.length !== 2) throw new RuntimeErr('TypeError', 'Invalid map initializer', 'Each map entry needs {key, value}.');
+        this.mapPut(b, this.evalAs(it.items[0]!, b.elemType), this.evalAs(it.items[1]!, b.valType ?? INT_TYPE), true);
+      }
+      return;
+    }
+    if (b.kind === 'set' || b.kind === 'pq') {
+      b.items = [];
+      for (const it of items) {
+        const v = val(it, b.elemType);
+        if (b.kind === 'set') this.setPut(b, v);
+        else this.pqPush(b, v);
+      }
+      return;
+    }
     b.items = items.map((it) => val(it, b.elemType));
   }
 
@@ -1080,6 +1499,16 @@ class Interpreter {
     const self = this.stack[this.stack.length - 1]?.self;
     const method = self?.struct ? this.findMethod(self.struct, name, e.args.length) : undefined;
     if (method && self) return this.callFunction(method, this.evalArgs(method, e.args), e.line, self);
+    // A variable holding a lambda: auto cmp = [](...){...}; function<int(int)> dfs = ...
+    const held = this.lookup(name);
+    if (held) {
+      const v = this.read(held);
+      if (v.t === 'fn') return this.callFunction(v.fn, this.evalArgs(v.fn, e.args), e.line, v.self, v.closure);
+      if (v.t === 'cmp') {
+        const [x, y] = e.args.map((a) => this.evalR(a));
+        return { t: 'bool', v: this.lessThan(x!, y!, v) };
+      }
+    }
     return this.builtin(name, e.args);
   }
 
@@ -1092,7 +1521,7 @@ class Interpreter {
       const a = argExprs[i];
       if (!a) throw new RuntimeErr('TypeError', 'Missing argument', `${label}() needs ${fn.params.length} arguments but got ${argExprs.length}.`);
       if (p.type.ref && this.isLValue(a)) return this.evalL(a);
-      return this.evalR(a);
+      return this.evalAs(a, p.type);
     });
   }
 
@@ -1121,14 +1550,22 @@ class Interpreter {
     return b;
   }
 
-  private callFunction(fn: FunctionDef, args: (RV | LV)[], callLine: number, self?: Block): RV {
+  private callFunction(fn: FunctionDef, args: (RV | LV)[], callLine: number, self?: Block, closure?: Scope[]): RV {
     if (this.stack.length >= 256) {
       throw new RuntimeErr('StackOverflow', 'Stack overflow', `Too many nested calls (over 256). ${fn.name}() keeps calling itself.`, 'The recursion never reached a base case, so calls kept piling up until the stack ran out of room.');
     }
     const caller = this.stack[this.stack.length - 1];
     if (caller) caller.line = callLine;
     const scope: Scope = { vars: new Map(), owned: [] };
-    const frame: CallFrame = { id: `f${this.stack.length}`, name: fn.owner ? `${fn.owner}::${fn.name}` : fn.name, line: fn.line, scopes: [scope], self };
+    const frame: CallFrame = {
+      id: `f${this.stack.length}`,
+      name: fn.owner ? `${fn.owner}::${fn.name}` : fn.name,
+      line: fn.line,
+      scopes: [scope],
+      self,
+      closure,
+      returnType: fn.returnType,
+    };
     if (self) {
       const thisCell = this.alloc('scalar', 'stack', { ...INT_TYPE, base: self.struct!.name, ptr: 1 }, [{ t: 'ptr', b: self, o: 0, ty: { ...INT_TYPE, base: self.struct!.name } }], undefined, 'this');
       scope.owned.push(thisCell);
@@ -1204,70 +1641,162 @@ class Interpreter {
     const objV = m.arrow && target.t === 'ptr' && objBlock ? ({ t: 'agg', b: objBlock } as RV) : target;
     const name = this.exprName(m.object);
     const args = () => argExprs.map((a) => this.evalR(a));
-    if (objV.t === 'str') {
-      const s = objV.v;
-      switch (m.name) {
-        case 'size':
-        case 'length':
-          return { t: 'int', v: s.length };
-        case 'empty':
-          return { t: 'bool', v: s.length === 0 };
-        case 'substr': {
-          const [pos, len] = args().map((v) => this.toNum(v));
-          return { t: 'str', v: s.substr(pos ?? 0, len) };
-        }
-        case 'c_str':
-          return objV;
-        case 'push_back':
-        case 'append': {
-          const lv = this.evalL(m.object);
-          const add = args()[0]!;
-          this.write(lv, { t: 'str', v: s + (add.t === 'char' ? String.fromCharCode(add.v) : add.t === 'str' ? add.v : '') });
-          return { t: 'void' };
-        }
-      }
-      throw new RuntimeErr('Unsupported', 'Unsupported method', `std::string.${m.name}() isn't supported yet.`);
-    }
+    if (objV.t === 'str') return this.stringMethod(objV.v, m, argExprs);
     if (objV.t !== 'agg' || objV.b.kind === 'struct' || objV.b.kind === 'array') {
       throw new RuntimeErr('Unsupported', 'Unsupported method', `${name ?? 'This value'} has no method ${m.name}().`);
     }
     const b = objV.b;
-    const kindLabel = b.kind === 'cpp_stack' ? 'stack' : b.kind === 'cpp_queue' ? 'queue' : 'vector';
+    const labels: Partial<Record<BlockKind, string>> = { cpp_stack: 'stack', cpp_queue: 'queue', deque: 'deque', map: 'map', set: 'set', pq: 'priority_queue' };
+    const kindLabel = labels[b.kind] ?? 'vector';
     const empty = (what: string) =>
       new RuntimeErr('EmptyContainer', `${what} on an empty ${kindLabel}`, `${name ?? kindLabel}.${what} was called, but ${name ?? `the ${kindLabel}`} is empty.`, `There is nothing in ${name ? `'${name}'` : `the ${kindLabel}`} to ${what.replace('()', '')}. Check empty() first.`);
-    const put = (v: RV) => {
-      const stored = v.t === 'agg' ? ({ t: 'agg', b: this.copyAgg(v.b, 'heap', null) } as RV) : this.coerce(v, b.elemType);
-      b.items.push(stored);
-    };
+    const arg = (i: number, type: TypeInfo) => this.evalAs(argExprs[i]!, type, null);
+    const size = b.kind === 'map' ? b.entries.length : b.items.length;
 
     switch (m.name) {
       case 'size':
-        return { t: 'int', v: b.items.length };
+        return { t: 'int', v: size };
       case 'empty':
-        return { t: 'bool', v: b.items.length === 0 };
+        return { t: 'bool', v: size === 0 };
       case 'clear':
         b.items = [];
-        return { t: 'void' };
-      case 'push_back':
-      case 'emplace_back':
-      case 'push':
-      case 'emplace':
-        put(args()[0]!);
+        b.entries = [];
         return { t: 'void' };
     }
 
-    if (b.kind === 'vector') {
+    if (b.kind === 'map') {
+      const keyArg = () => this.coerce(arg(0, b.elemType), b.elemType);
       switch (m.name) {
+        case 'count':
+        case 'contains': {
+          const found = this.mapFind(b, this.keyOf(keyArg())) >= 0;
+          return m.name === 'count' ? { t: 'int', v: found ? 1 : 0 } : { t: 'bool', v: found };
+        }
+        case 'find': {
+          const at = this.mapFind(b, this.keyOf(keyArg()));
+          return { t: 'iter', b, o: at < 0 ? b.entries.length : at };
+        }
+        case 'begin':
+          return { t: 'iter', b, o: 0 };
+        case 'end':
+          return { t: 'iter', b, o: b.entries.length };
+        case 'rbegin':
+          return { t: 'iter', b, o: b.entries.length - 1 };
+        case 'at': {
+          const k = keyArg();
+          if (this.mapFind(b, this.keyOf(k)) < 0) {
+            throw new RuntimeErr('OutOfRange', 'Key not found', `${name ?? 'The map'}.at() was called with a key that isn't in the map.`, 'at() throws std::out_of_range for a missing key. Use count() or find() to check first.');
+          }
+          return { b, key: this.keyOf(k), name };
+        }
+        case 'erase': {
+          const first = this.evalR(argExprs[0]!);
+          const at = first.t === 'iter' ? first.o : this.mapFind(b, this.keyOf(this.coerce(first, b.elemType)));
+          if (at >= 0 && at < b.entries.length) b.entries.splice(at, 1);
+          return { t: 'int', v: at >= 0 ? 1 : 0 };
+        }
+        case 'insert':
+        case 'emplace': {
+          let k: RV, v: RV;
+          if (argExprs.length === 2) {
+            k = arg(0, b.elemType);
+            v = arg(1, b.valType ?? INT_TYPE);
+          } else {
+            const p = arg(0, { ...INT_TYPE, base: 'pair', args: [b.elemType, b.valType ?? INT_TYPE] });
+            if (p.t !== 'agg' || p.b.kind !== 'struct') throw new RuntimeErr('TypeError', 'Invalid insert', 'map.insert() needs a {key, value} pair.');
+            k = p.b.fields.get('first')!;
+            v = p.b.fields.get('second')!;
+          }
+          const before = b.entries.length;
+          this.mapPut(b, k, v, false);
+          return { t: 'bool', v: b.entries.length > before };
+        }
+      }
+    }
+
+    if (b.kind === 'set') {
+      const valArg = () => this.coerce(arg(0, b.elemType), b.elemType);
+      const findAt = (v: RV) => b.items.findIndex((x) => this.keyOf(x) === this.keyOf(v));
+      switch (m.name) {
+        case 'insert':
+        case 'emplace':
+          return { t: 'bool', v: this.setPut(b, valArg()) };
+        case 'count':
+          return { t: 'int', v: findAt(valArg()) >= 0 ? 1 : 0 };
+        case 'contains':
+          return { t: 'bool', v: findAt(valArg()) >= 0 };
+        case 'find': {
+          const at = findAt(valArg());
+          return { t: 'iter', b, o: at < 0 ? b.items.length : at };
+        }
+        case 'erase': {
+          const first = this.evalR(argExprs[0]!);
+          const at = first.t === 'iter' ? first.o : findAt(this.coerce(first, b.elemType));
+          if (at >= 0 && at < b.items.length) b.items.splice(at, 1);
+          return { t: 'int', v: at >= 0 ? 1 : 0 };
+        }
+        case 'begin':
+          return { t: 'iter', b, o: 0 };
+        case 'end':
+          return { t: 'iter', b, o: b.items.length };
+        case 'rbegin':
+          return { t: 'iter', b, o: b.items.length - 1 };
+      }
+    }
+
+    if (b.kind === 'pq') {
+      switch (m.name) {
+        case 'push':
+        case 'emplace':
+          this.pqPush(b, arg(0, b.elemType));
+          return { t: 'void' };
+        case 'pop':
+          if (!b.items.length) throw empty('pop()');
+          this.pqPop(b);
+          return { t: 'void' };
+        case 'top':
+          if (!b.items.length) throw empty('top()');
+          return { b, i: 0, name };
+      }
+    }
+
+    // vector, deque, stack and queue keep plain items.
+    const push = () => {
+      b.items.push(this.stored(arg(0, b.elemType), b.elemType));
+      return { t: 'void' } as RV;
+    };
+    const lastOf = (what: string): LV => {
+      if (!b.items.length) throw empty(what);
+      return { b, i: b.items.length - 1, name };
+    };
+    const firstOf = (what: string): LV => {
+      if (!b.items.length) throw empty(what);
+      return { b, i: 0, name };
+    };
+
+    if (b.kind === 'vector' || b.kind === 'deque') {
+      switch (m.name) {
+        case 'push_back':
+        case 'emplace_back':
+          return push();
+        case 'push_front':
+        case 'emplace_front':
+          if (b.kind !== 'deque') break;
+          b.items.unshift(this.stored(arg(0, b.elemType), b.elemType));
+          return { t: 'void' };
         case 'pop_back':
           if (!b.items.length) throw empty('pop_back()');
           b.items.pop();
           return { t: 'void' };
+        case 'pop_front':
+          if (b.kind !== 'deque') break;
+          if (!b.items.length) throw empty('pop_front()');
+          b.items.shift();
+          return { t: 'void' };
         case 'back':
-          if (!b.items.length) throw empty('back()');
-          return { b, i: b.items.length - 1, name };
+          return lastOf('back()');
         case 'front':
-          if (!b.items.length) throw empty('front()');
-          return { b, i: 0, name };
+          return firstOf('front()');
         case 'at':
           return { b, i: this.toNum(args()[0]!), name };
         case 'begin':
@@ -1275,40 +1804,130 @@ class Interpreter {
         case 'end':
           return { t: 'ptr', b, o: b.items.length, ty: b.elemType };
         case 'resize': {
-          const [n, fill] = args();
-          const count = this.toNum(n!);
+          const count = this.toNum(this.evalR(argExprs[0]!));
+          const fill = argExprs[1] ? arg(1, b.elemType) : undefined;
           while (b.items.length > count) b.items.pop();
-          while (b.items.length < count) b.items.push(fill ? this.coerce(fill, b.elemType) : this.makeDefault(b.elemType, 'heap', null, true));
+          while (b.items.length < count) b.items.push(fill ? this.stored(fill, b.elemType) : this.makeDefault(b.elemType, 'heap', null, true));
           return { t: 'void' };
+        }
+        case 'assign': {
+          const count = this.toNum(this.evalR(argExprs[0]!));
+          const fill = arg(1, b.elemType);
+          b.items = Array.from({ length: count }, () => this.stored(fill, b.elemType));
+          return { t: 'void' };
+        }
+        case 'insert': {
+          const at = this.evalR(argExprs[0]!);
+          if (at.t !== 'ptr' || at.b !== b) throw new RuntimeErr('TypeError', 'Invalid insert', 'insert() needs a position like v.begin() + i.');
+          if (at.o < 0 || at.o > b.items.length) this.checkBounds(b.items.length + 1, at.o, name);
+          b.items.splice(at.o, 0, this.stored(arg(argExprs.length - 1, b.elemType), b.elemType));
+          return { t: 'ptr', b, o: at.o, ty: b.elemType };
+        }
+        case 'erase': {
+          const from = this.evalR(argExprs[0]!);
+          const to = argExprs[1] ? this.evalR(argExprs[1]) : undefined;
+          if (from.t !== 'ptr' || from.b !== b) throw new RuntimeErr('TypeError', 'Invalid erase', 'erase() needs a position like v.begin() + i.');
+          const end = to?.t === 'ptr' ? to.o : from.o + 1;
+          this.checkBounds(b.items.length, from.o, name);
+          b.items.splice(from.o, Math.max(0, end - from.o));
+          return { t: 'ptr', b, o: from.o, ty: b.elemType };
         }
       }
     }
     if (b.kind === 'cpp_stack') {
       switch (m.name) {
+        case 'push':
+        case 'emplace':
+          return push();
         case 'pop':
           if (!b.items.length) throw empty('pop()');
           b.items.pop();
           return { t: 'void' };
         case 'top':
-          if (!b.items.length) throw empty('top()');
-          return { b, i: b.items.length - 1, name };
+          return lastOf('top()');
       }
     }
     if (b.kind === 'cpp_queue') {
       switch (m.name) {
+        case 'push':
+        case 'emplace':
+          return push();
         case 'pop':
           if (!b.items.length) throw empty('pop()');
           b.items.shift();
           return { t: 'void' };
         case 'front':
-          if (!b.items.length) throw empty('front()');
-          return { b, i: 0, name };
+          return firstOf('front()');
         case 'back':
-          if (!b.items.length) throw empty('back()');
-          return { b, i: b.items.length - 1, name };
+          return lastOf('back()');
       }
     }
     throw new RuntimeErr('Unsupported', 'Unsupported method', `std::${kindLabel}.${m.name}() isn't supported yet.`);
+  }
+
+  private stringMethod(s: string, m: Expr & { type: 'Member' }, argExprs: Expr[]): RV | LV {
+    const args = () => argExprs.map((a) => this.evalR(a));
+    const self = () => this.evalL(m.object);
+    const text = (v: RV) => (v.t === 'char' ? String.fromCharCode(v.v) : v.t === 'str' ? v.v : '');
+    switch (m.name) {
+      case 'size':
+      case 'length':
+        return { t: 'int', v: s.length };
+      case 'empty':
+        return { t: 'bool', v: s.length === 0 };
+      case 'substr': {
+        const [pos, len] = args().map((v) => this.toNum(v));
+        if ((pos ?? 0) > s.length) this.checkBounds(s.length + 1, pos!, this.exprName(m.object));
+        return { t: 'str', v: s.substr(pos ?? 0, len) };
+      }
+      case 'c_str':
+        return { t: 'str', v: s };
+      case 'find':
+      case 'rfind': {
+        const [needle, from] = args();
+        const at = m.name === 'find' ? s.indexOf(text(needle!), from ? this.toNum(from) : 0) : s.lastIndexOf(text(needle!));
+        return { t: 'int', v: at }; // -1 is string::npos
+      }
+      case 'back':
+      case 'front': {
+        if (!s.length) throw new RuntimeErr('EmptyContainer', `${m.name}() on an empty string`, `${m.name}() was called on an empty string.`);
+        const base = self();
+        return { b: base.b, strOf: base, i: m.name === 'back' ? s.length - 1 : 0 };
+      }
+      case 'push_back':
+      case 'append': {
+        this.write(self(), { t: 'str', v: s + args().map(text).join('') });
+        return { t: 'void' };
+      }
+      case 'pop_back':
+        if (!s.length) throw new RuntimeErr('EmptyContainer', 'pop_back() on an empty string', 'pop_back() was called on an empty string.');
+        this.write(self(), { t: 'str', v: s.slice(0, -1) });
+        return { t: 'void' };
+      case 'clear':
+        this.write(self(), { t: 'str', v: '' });
+        return { t: 'void' };
+      case 'insert': {
+        const [pos, what] = args();
+        const at = this.toNum(pos!);
+        this.write(self(), { t: 'str', v: s.slice(0, at) + text(what!) + s.slice(at) });
+        return { t: 'void' };
+      }
+      case 'erase': {
+        const [pos, len] = args().map((v) => this.toNum(v));
+        const at = pos ?? 0;
+        this.write(self(), { t: 'str', v: s.slice(0, at) + (len === undefined ? '' : s.slice(at + len)) });
+        return { t: 'void' };
+      }
+      case 'begin':
+        return { t: 'siter', lv: self(), o: 0 };
+      case 'end':
+        return { t: 'siter', lv: self(), o: s.length };
+      case 'compare': {
+        const other = text(args()[0]!);
+        return { t: 'int', v: s < other ? -1 : s > other ? 1 : 0 };
+      }
+    }
+    throw new RuntimeErr('Unsupported', 'Unsupported method', `std::string.${m.name}() isn't supported yet.`);
   }
 
   private builtin(name: string, argExprs: Expr[]): RV | LV {
@@ -1375,30 +1994,147 @@ class Interpreter {
         return { t: 'float', v: Math.ceil(num(0)) };
       case 'max':
       case 'min': {
-        const [a, b] = args();
-        const pick = name === 'max' ? this.toNum(a!) >= this.toNum(b!) : this.toNum(a!) <= this.toNum(b!);
-        return pick ? a! : b!;
+        // max(a, b), max(a, b, cmp) and max({a, b, c})
+        const values = argExprs.length === 1 && argExprs[0]!.type === 'InitList' ? argExprs[0]!.items.map((x) => this.evalR(x)) : args();
+        const cmp = values.length === 3 && (values[2]!.t === 'fn' || values[2]!.t === 'cmp') ? values.pop() : undefined;
+        return values.reduce((best, v) => (name === 'max' ? this.lessThan(best, v, cmp) : this.lessThan(v, best, cmp)) ? v : best);
       }
       case 'swap': {
         const a = this.evalL(argExprs[0]!);
         const b = this.evalL(argExprs[1]!);
         const va = this.read(a);
         const vb = this.read(b);
-        if (va.t === 'agg' || vb.t === 'agg') throw new RuntimeErr('Unsupported', 'Unsupported feature', 'swap() of whole containers or structs is not supported yet.');
+        if (va.t === 'agg' && vb.t === 'agg') {
+          // Swapping containers or structs exchanges their contents.
+          const x = va.b;
+          const y = vb.b;
+          [x.items, y.items] = [y.items, x.items];
+          [x.fields, y.fields] = [y.fields, x.fields];
+          [x.entries, y.entries] = [y.entries, x.entries];
+          return { t: 'void' };
+        }
         this.write(a, vb);
         this.write(b, va);
         return { t: 'void' };
       }
+      case 'make_pair': {
+        const [x, y] = args();
+        return { t: 'agg', b: this.pairOf(x!, y!) };
+      }
       case 'sort':
+      case 'stable_sort':
       case 'reverse': {
-        const [from, to] = args();
-        if (from?.t !== 'ptr' || to?.t !== 'ptr' || !from.b || from.b !== to.b) throw new RuntimeErr('TypeError', `Invalid ${name}() range`, `${name}() needs a range like (v.begin(), v.end()) or (arr, arr + n).`);
-        const b = from.b;
-        const slice = b.items.slice(from.o, to.o);
-        if (name === 'sort') slice.sort((x, y) => this.toNum(x) - this.toNum(y));
-        else slice.reverse();
-        b.items.splice(from.o, slice.length, ...slice);
+        const [from, to, cmp] = args();
+        if (from?.t === 'siter' && to?.t === 'siter') {
+          const str = this.read(from.lv);
+          if (str.t !== 'str') break;
+          const chars = [...str.v.slice(from.o, to.o)];
+          if (name === 'reverse') chars.reverse();
+          else chars.sort((x, y) => (this.lessThan({ t: 'char', v: x.charCodeAt(0) }, { t: 'char', v: y.charCodeAt(0) }, cmp) ? -1 : 1));
+          this.write(from.lv, { t: 'str', v: str.v.slice(0, from.o) + chars.join('') + str.v.slice(to.o) });
+          return { t: 'void' };
+        }
+        const { b, lo, hi } = this.range(name, from, to);
+        const slice = b.items.slice(lo, hi);
+        if (name === 'reverse') slice.reverse();
+        else {
+          // Merge sort: stable, and asks the comparator only O(n log n) times.
+          const sorted = this.mergeSort(slice, (x, y) => this.lessThan(x, y, cmp));
+          slice.splice(0, slice.length, ...sorted);
+        }
+        b.items.splice(lo, slice.length, ...slice);
         return { t: 'void' };
+      }
+      case 'max_element':
+      case 'min_element': {
+        const [from, to, cmp] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        let best = lo;
+        for (let i = lo + 1; i < hi; i++) {
+          const better = name === 'max_element' ? this.lessThan(b.items[best]!, b.items[i]!, cmp) : this.lessThan(b.items[i]!, b.items[best]!, cmp);
+          if (better) best = i;
+        }
+        return { t: 'ptr', b, o: hi > lo ? best : hi, ty: b.elemType };
+      }
+      case 'accumulate': {
+        const [from, to, init] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        let sum = init ?? { t: 'int', v: 0 };
+        for (let i = lo; i < hi; i++) sum = this.arith('+', sum, b.items[i]!);
+        return sum;
+      }
+      case 'count':
+      case 'find': {
+        const [from, to, value] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        const key = this.keyOf(this.coerce(value!, b.elemType));
+        if (name === 'count') return { t: 'int', v: b.items.slice(lo, hi).filter((x) => this.keyOf(x) === key).length };
+        const at = b.items.slice(lo, hi).findIndex((x) => this.keyOf(x) === key);
+        return { t: 'ptr', b, o: at < 0 ? hi : lo + at, ty: b.elemType };
+      }
+      case 'lower_bound':
+      case 'upper_bound':
+      case 'binary_search': {
+        const [from, to, value] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        let l = lo;
+        let r = hi;
+        while (l < r) {
+          const mid = (l + r) >> 1;
+          const c = this.compareRV(b.items[mid]!, value!);
+          if (name === 'upper_bound' ? c <= 0 : c < 0) l = mid + 1;
+          else r = mid;
+        }
+        if (name === 'binary_search') return { t: 'bool', v: l < hi && this.compareRV(b.items[l]!, value!) === 0 };
+        return { t: 'ptr', b, o: l, ty: b.elemType };
+      }
+      case 'fill':
+      case 'iota': {
+        const [from, to, value] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        for (let i = lo; i < hi; i++) b.items[i] = this.stored(name === 'fill' ? value! : this.arith('+', value!, { t: 'int', v: i - lo }), b.elemType);
+        return { t: 'void' };
+      }
+      case 'memset': {
+        // memset(dp, -1, sizeof dp): fills every element (rows too) with the byte value.
+        const [target, value] = args();
+        const block = target?.t === 'agg' ? target.b : target?.t === 'ptr' ? this.deref(target) : null;
+        if (!block) throw new RuntimeErr('TypeError', 'Invalid memset', 'memset() needs an array or pointer.');
+        const fillAll = (b: Block) => b.items.forEach((x, i) => (x.t === 'agg' ? fillAll(x.b) : (b.items[i] = this.coerce(value!, b.elemType))));
+        fillAll(block);
+        return { t: 'void' };
+      }
+      case 'gcd':
+      case '__gcd':
+      case 'lcm': {
+        let [x, y] = args().map((v) => Math.abs(this.toNum(v)));
+        const product = x! * y!;
+        while (y) [x, y] = [y, x! % y];
+        return { t: 'int', v: name === 'lcm' ? (x ? product / x : 0) : x! };
+      }
+      case 'stoi':
+      case 'stol':
+      case 'stoll':
+      case 'atoi': {
+        const v = this.evalR(argExprs[0]!);
+        const n = parseInt(v.t === 'str' ? v.v : '', 10);
+        if (Number.isNaN(n)) throw new RuntimeErr('InvalidArgument', 'Invalid number', `${name}() got text that isn't a number.`);
+        return name === 'stoi' || name === 'atoi' ? { t: 'int', v: n | 0 } : { t: 'long', v: BigInt(n) };
+      }
+      case 'isdigit':
+      case 'isalpha':
+      case 'isalnum':
+      case 'isspace':
+      case 'islower':
+      case 'isupper': {
+        const c = String.fromCharCode(num(0));
+        const tests: Record<string, RegExp> = { isdigit: /\d/, isalpha: /[A-Za-z]/, isalnum: /[A-Za-z0-9]/, isspace: /\s/, islower: /[a-z]/, isupper: /[A-Z]/ };
+        return { t: 'bool', v: tests[name]!.test(c) };
+      }
+      case 'tolower':
+      case 'toupper': {
+        const c = String.fromCharCode(num(0));
+        return { t: 'char', v: (name === 'tolower' ? c.toLowerCase() : c.toUpperCase()).charCodeAt(0) };
       }
       case 'strlen': {
         const v = this.evalR(argExprs[0]!);
@@ -1430,6 +2166,25 @@ class Interpreter {
         throw new ReturnSignal({ t: 'int', v: num(0) });
     }
     throw new RuntimeErr('NameError', 'Unknown function', `'${name}' is not a function Tracel knows about.`, `There is no function named '${name}' in this program, and it isn't one of the library functions Tracel supports.`);
+  }
+
+  /** A [first, last) range of one container or array, from two pointers/iterators. */
+  private range(fn: string, from?: RV, to?: RV): { b: Block; lo: number; hi: number } {
+    if (from?.t !== 'ptr' || to?.t !== 'ptr' || !from.b || from.b !== to.b) {
+      throw new RuntimeErr('TypeError', `Invalid ${fn}() range`, `${fn}() needs a range like (v.begin(), v.end()) or (arr, arr + n).`);
+    }
+    if (from.o < 0 || to.o > from.b.items.length || from.o > to.o) this.checkBounds(from.b.items.length + 1, from.o < 0 ? from.o : to.o);
+    return { b: from.b, lo: from.o, hi: to.o };
+  }
+
+  private mergeSort(items: RV[], less: (a: RV, b: RV) => boolean): RV[] {
+    if (items.length < 2) return items;
+    const mid = items.length >> 1;
+    const left = this.mergeSort(items.slice(0, mid), less);
+    const right = this.mergeSort(items.slice(mid), less);
+    const out: RV[] = [];
+    while (left.length && right.length) out.push(less(right[0]!, left[0]!) ? right.shift()! : left.shift()!);
+    return [...out, ...left, ...right];
   }
 
   private free(p: RV, how: 'free' | 'delete') {
@@ -1515,7 +2270,7 @@ class Interpreter {
       const tok = this.stdin[this.stdinPos++];
       if (tok === undefined) return stream;
       const cur = 'whole' in lv ? null : this.read(lv);
-      const ty = cur?.t === 'uninit' ? cur.ty : 'f' in lv ? this.fieldType(lv.b, lv.f) : lv.b.elemType;
+      const ty = cur?.t === 'uninit' ? cur.ty : 'f' in lv ? this.fieldType(lv.b, lv.f) : 'key' in lv ? (lv.b.valType ?? INT_TYPE) : 'strOf' in lv ? { ...INT_TYPE, base: 'char' } : lv.b.elemType;
       const v: RV = ty.base === 'string' ? { t: 'str', v: tok } : ty.base === 'char' ? { t: 'char', v: tok.charCodeAt(0) } : isFloatBase(ty.base) ? { t: 'float', v: Number(tok) } : { t: 'int', v: parseInt(tok, 10) || 0 };
       this.write(lv, v);
       return stream;
@@ -1590,7 +2345,8 @@ class Interpreter {
         return;
       case 'Return':
         this.step(s.line, s.range);
-        throw new ReturnSignal(s.value ? this.evalR(s.value) : { t: 'void' });
+        // return {a, b}; builds the function's return type.
+        throw new ReturnSignal(s.value ? this.evalAs(s.value, frame.returnType ?? INT_TYPE) : { t: 'void' });
       case 'Break':
         this.step(s.line, s.range);
         throw new BreakSignal();
@@ -1642,31 +2398,81 @@ class Interpreter {
         return;
       case 'RangeFor': {
         this.step(s.line);
-        const it = this.evalR(s.iterable);
-        if (it.t !== 'agg' || it.b.kind === 'struct') throw new RuntimeErr('TypeError', 'Not iterable', 'A range-based for loop needs an array or container.');
-        const b = it.b;
+        // for (int v : {3, 1, 4}) iterates a temporary list.
+        const it: RV =
+          s.iterable.type === 'InitList'
+            ? (() => {
+                const values = s.iterable.items.map((x) => this.evalR(x));
+                const elem = s.decl.type.base === 'auto' && values[0] ? this.typeOfValue(values[0]) : { ...s.decl.type, ref: false };
+                const tmp = this.alloc('array', 'stack', elem, values.map((v) => this.coerce(v, elem)));
+                this.blocks.delete(tmp.id);
+                return { t: 'agg', b: tmp } as RV;
+              })()
+            : this.evalR(s.iterable);
+        // What one iteration binds: a container slot, a map entry, or a string character.
+        let count: number;
+        let element: (i: number) => { lv: LV } | { value: RV };
+        if (it.t === 'str') {
+          const base = this.isLValue(s.iterable) ? this.evalL(s.iterable) : null;
+          count = it.v.length;
+          element = (i) => (base && s.decl.type.ref ? { lv: { b: base.b, strOf: base, i } } : { value: { t: 'char', v: it.v.charCodeAt(i) } });
+        } else if (it.t === 'agg' && it.b.kind === 'map') {
+          const m = it.b;
+          count = m.entries.length;
+          element = (i) => {
+            const pair = (this.makeDefault({ ...INT_TYPE, base: 'pair', args: [m.elemType, m.valType ?? INT_TYPE] }, 'stack', null) as RV & { t: 'agg' }).b;
+            this.blocks.delete(pair.id);
+            pair.fields.set('first', m.entries[i]!.k);
+            pair.fields.set('second', m.entries[i]!.v);
+            return { value: { t: 'agg', b: pair } };
+          };
+        } else if (it.t === 'agg' && it.b.kind !== 'struct') {
+          const b = it.b;
+          count = b.items.length;
+          element = (i) => ({ lv: { b, i } });
+        } else {
+          throw new RuntimeErr('TypeError', 'Not iterable', 'A range-based for loop needs an array, string or container.');
+        }
+        const mapBlock = it.t === 'agg' && it.b.kind === 'map' ? it.b : null;
         let i = 0;
         this.loopCounts.set(s, 0);
         this.withScope(frame, () => {
-          const scope = frame.scopes[frame.scopes.length - 1]!;
           for (;;) {
             if (i > 0) this.step(s.line);
-            if (i >= b.items.length) break;
-            if (s.decl.type.ref) scope.vars.set(s.decl.name, { b, i });
-            else {
-              const ty = s.decl.type.base === 'auto' ? b.elemType : s.decl.type;
-              const cell = this.alloc('scalar', 'stack', ty, [this.coerce(b.items[i]!, ty)], undefined, s.decl.name);
-              scope.owned.push(cell);
-              const old = scope.vars.get(s.decl.name);
-              if (old) {
-                old.b.dead = true;
-                this.blocks.delete(old.b.id);
+            if (i >= count) break;
+            // A fresh scope per iteration, so the loop variable is recreated each time.
+            const scope: Scope = { vars: new Map(), owned: [] };
+            frame.scopes.push(scope);
+            try {
+              const el = element(i);
+              if (s.decl.bindings) {
+                if (mapBlock && s.decl.type.ref) {
+                  // for (auto& [k, v] : m): v aliases the stored value.
+                  const entry = mapBlock.entries[i]!;
+                  this.bindNames([s.decl.bindings[0]!], { t: 'agg', b: this.pairOf(entry.k, entry.k) }, scope, false);
+                  if (s.decl.bindings[1]) scope.vars.set(s.decl.bindings[1], { b: mapBlock, key: this.keyOf(entry.k) });
+                } else {
+                  this.bindNames(s.decl.bindings, 'lv' in el ? this.read(el.lv) : el.value, scope, s.decl.type.ref && 'lv' in el);
+                }
+              } else if (s.decl.type.ref && 'lv' in el) {
+                scope.vars.set(s.decl.name, el.lv);
+              } else {
+                const value = 'lv' in el ? this.read(el.lv) : el.value;
+                if (value.t === 'agg') scope.vars.set(s.decl.name, { b: this.copyAgg(value.b, 'stack', scope.owned), whole: true });
+                else {
+                  const ty = s.decl.type.base === 'auto' ? this.typeOfValue(value) : s.decl.type;
+                  const cell = this.alloc('scalar', 'stack', ty, [this.coerce(value, ty)], undefined, s.decl.name);
+                  scope.owned.push(cell);
+                  scope.vars.set(s.decl.name, { b: cell, i: 0 });
+                }
               }
-              scope.vars.set(s.decl.name, { b: cell, i: 0 });
+              this.iterate(s);
+              i++;
+              if (this.runBody(s.body, frame) === 'break') break;
+            } finally {
+              frame.scopes.pop();
+              this.releaseScope(scope);
             }
-            this.iterate(s);
-            i++;
-            if (this.runBody(s.body, frame) === 'break') break;
           }
         });
         return;
@@ -1727,6 +2533,12 @@ class Interpreter {
     const zero = region === 'static';
     const ty = d.type;
 
+    // Structured binding: auto [a, b] = p;
+    if (d.bindings) {
+      this.bindNames(d.bindings, this.evalR(d.init!), scope, ty.ref);
+      return;
+    }
+
     // Reference: alias the existing storage.
     if (ty.ref) {
       if (!d.init || !this.isLValue(d.init)) throw new RuntimeErr('TypeError', 'Invalid reference', `Reference '${d.name}' must be bound to a variable.`);
@@ -1755,7 +2567,7 @@ class Interpreter {
     if (d.init && d.init.type !== 'InitList') init = this.evalR(d.init);
     const resolved: TypeInfo = ty.base === 'auto' && init ? this.typeOfValue(init) : ty;
 
-    if (!resolved.ptr && (CONTAINERS.has(resolved.base) || this.program.structs.has(resolved.base))) {
+    if (!resolved.ptr && (CONTAINERS.has(resolved.base) || this.structOf(resolved))) {
       let b: Block;
       if (init?.t === 'agg') b = this.copyAgg(init.b, region, scope.owned);
       else if (this.program.structs.get(resolved.base)?.methods.get(resolved.base)?.length) {
@@ -1766,9 +2578,8 @@ class Interpreter {
         b = (this.makeDefault(resolved, region, scope.owned, zero) as RV & { t: 'agg' }).b;
         if (d.init?.type === 'InitList') this.fillFromList(b, d.init.items);
         else if (d.ctorArgs?.length) {
-          if (b.kind !== 'vector') throw new RuntimeErr('Unsupported', 'Unsupported feature', `Constructor arguments are only supported for std::vector.`);
-          const [n, fill] = d.ctorArgs.map((a) => this.evalR(a));
-          b.items = Array.from({ length: this.toNum(n!) }, () => (fill ? this.coerce(fill, b.elemType) : this.makeDefault(b.elemType, 'heap', null, true)));
+          if (b.kind === 'struct') this.fillFromList(b, d.ctorArgs); // pair<int, int> p(1, 2)
+          else this.applyCtorArgs(b, d.ctorArgs);
         }
       }
       scope.vars.set(d.name, { b, whole: true });
@@ -1778,7 +2589,7 @@ class Interpreter {
     // Scalars and pointers.
     let value: RV;
     if (d.init?.type === 'InitList') value = d.init.items[0] ? this.evalR(d.init.items[0]) : this.makeDefault(resolved, region, null, true);
-    else if (d.ctorArgs?.length) value = this.evalR(d.ctorArgs[0]!);
+    else if (d.ctorArgs?.length) value = resolved.base === 'string' ? this.constructTemp(resolved, d.ctorArgs, false) : this.evalR(d.ctorArgs[0]!);
     else value = init ?? this.makeDefault(resolved, region, null, zero);
     if (value.t === 'agg' && value.b.kind === 'array') value = { t: 'ptr', b: value.b, o: 0, ty: value.b.elemType };
     if (value.t === 'ptr' && resolved.ptr && value.b?.elemType.base === 'byte') this.retype(value.b, this.pointee(resolved));
@@ -1807,7 +2618,13 @@ class Interpreter {
       case 'ptr':
         return { ...v.ty, ptr: v.ty.ptr + 1 };
       case 'agg':
-        return v.b.kind === 'struct' ? { ...INT_TYPE, base: v.b.struct!.name } : { ...INT_TYPE, base: v.b.kind === 'cpp_stack' ? 'stack' : v.b.kind === 'cpp_queue' ? 'queue' : 'vector', args: [v.b.elemType] };
+        if (v.b.kind === 'struct') return v.b.struct!.name.startsWith('pair<') ? { ...INT_TYPE, base: 'pair', args: v.b.struct!.fields.map((f) => f.type) } : { ...INT_TYPE, base: v.b.struct!.name };
+        if (v.b.kind === 'map') return { ...INT_TYPE, base: v.b.ordered ? 'map' : 'unordered_map', args: [v.b.elemType, v.b.valType ?? INT_TYPE] };
+        return {
+          ...INT_TYPE,
+          base: ({ cpp_stack: 'stack', cpp_queue: 'queue', deque: 'deque', set: v.b.ordered ? 'set' : 'unordered_set', pq: 'priority_queue' } as Record<string, string>)[v.b.kind] ?? 'vector',
+          args: [v.b.elemType],
+        };
       default:
         return INT_TYPE;
     }

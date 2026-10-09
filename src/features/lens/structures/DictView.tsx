@@ -31,7 +31,7 @@ export const DictView: React.FC<DictViewProps> = ({ obj, label, events, onHoverR
 
   return (
     <div className={styles.card}>
-      <StructureHeader name={label || 'dict'} meta={`dict, ${entries.length} keys`} caption={caption(events, obj.id)} />
+      <StructureHeader name={label || 'dict'} meta={`${obj.typeName || 'dict'}, ${entries.length} key${entries.length === 1 ? '' : 's'}`} caption={caption(events, obj.id)} />
       {entries.length === 0 ? (
         <div className={styles.empty}>Empty</div>
       ) : (

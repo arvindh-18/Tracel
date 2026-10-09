@@ -1,6 +1,7 @@
 .chain {
   display: flex;
-  align-items: center;
+  /* Top-aligned columns with a fixed-height label row keep every node on one line. */
+  align-items: flex-start;
   gap: var(--sp-4);
   overflow-x: auto;
   padding-bottom: var(--sp-4);
@@ -11,6 +12,12 @@
   flex-direction: column;
   align-items: center;
   gap: var(--sp-4);
+}
+
+/* The "head" label row is the same height for every node, labelled or not. */
+.column > :first-child {
+  height: var(--sp-16);
+  line-height: var(--sp-16);
 }
 
 .node {
@@ -50,6 +57,11 @@
 }
 
 .arrow {
+  display: flex;
+  align-items: center;
+  /* Skip the label row, then centre on the node box. */
+  margin-top: calc(var(--sp-16) + var(--sp-4));
+  height: var(--h-control-md);
   color: var(--text-3);
 }
 
@@ -63,4 +75,12 @@
   display: flex;
   gap: var(--sp-4);
   min-height: var(--sp-16);
+}
+
+/* The closing "null" sits on the node line, like the arrow before it. */
+.end {
+  display: flex;
+  align-items: center;
+  margin-top: calc(var(--sp-16) + var(--sp-4));
+  height: var(--h-control-md);
 }

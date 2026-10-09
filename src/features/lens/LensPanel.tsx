@@ -10,10 +10,15 @@ import { LinkedListView } from './structures/LinkedListView';
 import { DictView } from './structures/DictView';
 import { ObjectView } from './structures/ObjectView';
 import { GridView } from './structures/GridView';
+import { TreeView } from './structures/TreeView';
+import { formatValue } from './structures/grammar';
+import { ArrayTreeView } from './structures/ArrayTreeView';
+import { useViewStore } from '../../store/views';
+import own from './structures/ArrayTreeView.module.css';
 import { OutputSection } from './sections/Output';
 import { ErrorCard } from './sections/ErrorCard';
 import { EmptyState } from './sections/EmptyState';
-import { HeapObject, LensKind } from '../../trace/schema';
+import { HeapObject, LensKind, Value } from '../../trace/schema';
 import { cx } from '../../ui/cx';
 import { Section } from './Section';
 import styles from './LensPanel.module.css';
@@ -23,6 +28,8 @@ export const LensPanel: React.FC = () => {
   const sessionError = useSessionStore((s) => s.error);
   const currentStepIndex = usePlaybackStore((s) => s.currentStepIndex);
   const [hoveredRefId, setHoveredRefId] = useState<string | null>(null);
+  const layouts = useViewStore((s) => s.layouts);
+  const setLayout = useViewStore((s) => s.setLayout);
 
   if (!trace || trace.steps.length === 0) {
     // A program rejected before it ran (parse or unsupported feature) has an error but no steps.
@@ -49,22 +56,54 @@ export const LensPanel: React.FC = () => {
         if (val.id) {
           visibleHeapIds.add(val.id);
           const existing = varLabelsByHeapId.get(val.id);
-          varLabelsByHeapId.set(val.id, existing ? `${existing}, ${name}` : name);
+          // The same name in several frames (recursion, this) is listed once.
+          if (!existing?.split(', ').includes(name)) varLabelsByHeapId.set(val.id, existing ? `${existing}, ${name}` : name);
         }
       }
     }
   }
 
-  // A node some other node's `next` points at is drawn inside that list, not as a list of its own.
-  const linkedTargets = new Set<string>();
-  for (const obj of Object.values(heap)) {
-    const next = obj.fields?.find(([name]) => name === 'next')?.[1];
-    if (next && (next.k === 'ref' || next.k === 'ptr') && next.id && next.id !== obj.id) linkedTargets.add(next.id);
+  // Containers held inside a visible object (this->values, self.stack) or as a map's values
+  // get their own card too, labelled by the path that reaches them.
+  const isContainer = (o: HeapObject | undefined) => !!o && o.kind !== 'struct' && o.kind !== 'instance' && o.kind !== 'class';
+  const queue = [...visibleHeapIds];
+  while (queue.length) {
+    const id = queue.shift()!;
+    const obj = heap[id];
+    if (!obj) continue;
+    const parent = varLabelsByHeapId.get(id) ?? id;
+    const children: [string, Value][] = [
+      ...(obj.fields ?? []).map(([f, v]) => [`${parent}${obj.kind === 'struct' ? '.' : '.'}${f}`, v] as [string, Value]),
+      ...(obj.entries ?? []).map(([k, v]) => [`${parent}[${formatValue(k)}]`, v] as [string, Value]),
+    ];
+    for (const [path, v] of children) {
+      if ((v.k === 'ref' || v.k === 'inline') && v.id && !visibleHeapIds.has(v.id) && isContainer(heap[v.id])) {
+        visibleHeapIds.add(v.id);
+        varLabelsByHeapId.set(v.id, path);
+        queue.push(v.id);
+      }
+    }
   }
 
-  const heapObjects = Object.values(heap).filter(
-    (obj) => visibleHeapIds.has(obj.id) && !(trace.lensHints[obj.id] === 'linked_list' && linkedTargets.has(obj.id))
-  );
+  // A node another node's next/left/right points at is drawn inside that list or tree, not on its own.
+  const linkedTargets = new Set<string>();
+  for (const obj of Object.values(heap)) {
+    for (const [name, v] of obj.fields ?? []) {
+      if (!['next', 'left', 'right'].includes(name.toLowerCase())) continue;
+      if ((v.k === 'ref' || v.k === 'ptr') && v.id && v.id !== obj.id) linkedTargets.add(v.id);
+    }
+  }
+
+  const heapObjects = Object.values(heap).filter((obj) => {
+    const lens = trace.lensHints[obj.id];
+    // An object with no fields (e.g. a stateless class Solution) has nothing to draw.
+    if (obj.kind === 'struct' && !obj.fields?.length) return false;
+    return visibleHeapIds.has(obj.id) && !((lens === 'linked_list' || lens === 'tree') && linkedTargets.has(obj.id));
+  });
+
+  // The variables the current line works with ("encountered"), highlighted in the Variables panel.
+  const lineText = (trace.source.split('\n')[step.line - 1] ?? '').replace(/\/\/.*$|#.*$/, '');
+  const activeNames = new Set(lineText.match(/[A-Za-z_]\w*/g) ?? []);
 
   // Python records a final "module returns" step after an exception; keep the card from the exception on.
   const errorAt = trace.steps.findIndex((s) => s.kind === 'exception');
@@ -86,8 +125,25 @@ export const LensPanel: React.FC = () => {
         return <ObjectView {...props} />;
       case 'grid':
         return <GridView {...props} allHeap={heap} />;
-      default:
-        return <ArrayView {...props} />;
+      case 'tree':
+        if (obj.kind === 'struct' || obj.kind === 'instance') return <TreeView {...props} allHeap={heap} />;
+        return <ArrayTreeView {...props} />;
+      default: {
+        // Arrays, vectors and lists can be drawn as a row or as the binary tree they encode.
+        const key = `${trace.language}:${props.label ?? obj.id}`;
+        // A priority queue is a binary heap, so it starts in the tree layout.
+        const layout = layouts[key] ?? (obj.kind === 'cpp_priority_queue' ? 'tree' : 'array');
+        const actions = (
+          <span className={own.toggle} role="group" aria-label="Layout">
+            {(['array', 'tree'] as const).map((l) => (
+              <button key={l} type="button" aria-pressed={layout === l} onClick={() => setLayout(key, l)}>
+                {l === 'array' ? 'Array' : 'Tree'}
+              </button>
+            ))}
+          </span>
+        );
+        return layout === 'tree' ? <ArrayTreeView {...props} actions={actions} /> : <ArrayView {...props} actions={actions} />;
+      }
     }
   };
 
@@ -105,7 +161,7 @@ export const LensPanel: React.FC = () => {
       )}
       {activeError && <ErrorCard error={activeError} />}
 
-      {frames.length > 0 && <FramesSection frames={frames} events={events} onHoverRef={setHoveredRefId} />}
+      {frames.length > 0 && <FramesSection frames={frames} events={events} activeNames={activeNames} onHoverRef={setHoveredRefId} />}
 
       {heapObjects.length > 0 && (
         <Section title="Data structures" count={heapObjects.length}>

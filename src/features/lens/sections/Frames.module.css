@@ -50,13 +50,26 @@
 }
 
 .locals {
-  display: grid;
-  grid-template-columns: minmax(80px, max-content) 1fr;
-  gap: var(--sp-4) var(--sp-16);
+  /* Variables flow along one line and wrap only when the frame runs out of width. */
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
   align-items: center;
   padding: var(--sp-8) var(--sp-12);
   font-family: var(--font-mono);
   font-size: var(--fs-title);
+}
+
+.local {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  max-width: 100%;
+  padding: 2px var(--sp-4) 2px var(--sp-8);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-cell);
+  background-color: var(--bg-surface);
+  white-space: nowrap;
 }
 
 .varName {
@@ -85,4 +98,15 @@
   padding: var(--sp-8) var(--sp-12);
   color: var(--text-3);
   font-size: var(--fs-title);
+}
+
+/* The variables the current line works with. */
+.active {
+  border-color: var(--exec);
+  box-shadow: 0 0 0 1px var(--exec-soft);
+}
+
+.active .varName {
+  color: var(--exec);
+  font-weight: 600;
 }
