@@ -24,21 +24,20 @@ int main() {
     expect(trace.stdout).toBe('7 3\n');
   });
 
-  it('rejects user-defined templates upfront with line-anchored explanation', () => {
-    const code = `template<typename T>
+  it('runs user-defined function templates', () => {
+    const code = `#include <stdio.h>
+template<typename T>
 T add(T a, T b) {
     return a + b;
 }
 int main() {
+    printf("%d %.1f\\n", add(2, 3), add(1.5, 2.0));
     return 0;
 }
 `;
     const trace = runClikeInterpreter(code);
-    expect(trace.status).toBe('error');
-    expect(trace.error?.phase).toBe('unsupported');
-    expect(trace.error?.kind).toBe('UnsupportedFeature');
-    expect(trace.error?.line).toBe(1);
-    expect(trace.error?.message).toContain('templates');
+    expect(trace.status).toBe('completed');
+    expect(trace.stdout).toBe('5 3.5\n');
   });
 
   it('handles array sum loops', () => {

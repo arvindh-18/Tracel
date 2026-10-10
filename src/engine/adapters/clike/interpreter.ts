@@ -1,7 +1,7 @@
 import { RawStep, RawTrace } from '../../../trace/normalize';
 import { Frame, HeapObject, TraceError, TraceEvent, Value } from '../../../trace/schema';
 import { CompileError } from './lexer';
-import { CONTAINERS, Declarator, Expr, FunctionDef, Program, Stmt, StructDef, TypeInfo, parseProgram, typeName } from './parser';
+import { CONTAINERS, STD_EXCEPTIONS, STREAM_TYPES, Declarator, Expr, FunctionDef, Program, Stmt, StructDef, TypeInfo, parseProgram, typeName } from './parser';
 
 export interface ExecOptions {
   stepLimit?: number;
@@ -17,7 +17,7 @@ export interface ExecOptions {
 // containers keep their items. Pointers are (block, offset) pairs, so &x,
 // array decay, pointer arithmetic and new/delete all share one model.
 
-type BlockKind = 'scalar' | 'array' | 'struct' | 'vector' | 'cpp_stack' | 'cpp_queue' | 'deque' | 'map' | 'set' | 'pq';
+type BlockKind = 'scalar' | 'array' | 'struct' | 'vector' | 'cpp_stack' | 'cpp_queue' | 'deque' | 'map' | 'set' | 'pq' | 'sstream';
 
 interface Block {
   id: string;
@@ -34,6 +34,12 @@ interface Block {
   /** priority_queue order: greater<T> makes a min-heap; a comparator overrides both. */
   minHeap?: boolean;
   cmp?: RV;
+  /** multiset / multimap: equal keys are kept. */
+  multi?: boolean;
+  /** stringstream: text and read position; failed after a read past the end. */
+  buf?: string;
+  pos?: number;
+  failed?: boolean;
   freed: boolean;
   dead: boolean; // stack storage whose scope has ended
   addr: number;
@@ -50,7 +56,7 @@ type RV =
   | { t: 'agg'; b: Block }
   | { t: 'uninit'; ty: TypeInfo }
   | { t: 'void' }
-  | { t: 'stream'; name: 'cout' | 'cin' | 'cerr' }
+  | { t: 'stream'; name: 'cout' | 'cin' | 'cerr'; failed?: boolean }
   | { t: 'manip'; name: string; arg?: number }
   | { t: 'fn'; fn: FunctionDef; closure: Scope[]; self?: Block } // lambda or function used as a value
   | { t: 'iter'; b: Block; o: number } // map/set iterator: position in entries/items
@@ -80,6 +86,10 @@ interface CallFrame {
   /** A lambda's enclosing scopes, searched after its own (captures behave as by reference). */
   closure?: Scope[];
   returnType?: TypeInfo;
+  /** The class a member function (static or not) belongs to. */
+  owner?: string;
+  /** The exception a catch block is handling, for a bare `throw;`. */
+  handling?: RV;
 }
 
 class RuntimeErr extends Error {
@@ -97,6 +107,16 @@ class ReturnSignal {
   constructor(public value: RV) {}
 }
 class BreakSignal {}
+/** A C++ exception in flight: throw value; caught by try/catch, or ends the program. */
+class CppThrow {
+  constructor(
+    public value: RV,
+    public line: number
+  ) {}
+}
+class GotoSignal {
+  constructor(public label: string) {}
+}
 class ContinueSignal {}
 class LimitSignal {}
 
@@ -166,7 +186,8 @@ export function runClikeInterpreter(source: string, options: ExecOptions = {}): 
 class Interpreter {
   private steps: RawStep[] = [];
   private stdout = '';
-  private stdin: string[];
+  /** The Input box as text; >> and scanf read tokens, getline reads lines. */
+  private stdinText: string;
   private stdinPos = 0;
   private stepLimit: number;
   private stack: CallFrame[] = [];
@@ -190,7 +211,7 @@ class Interpreter {
   ) {
     this.stepLimit = options.stepLimit ?? 5000;
     this.onProgress = options.onProgress;
-    this.stdin = (options.stdin ?? '').split(/\s+/).filter(Boolean);
+    this.stdinText = options.stdin ?? '';
   }
 
   run(): RawTrace {
@@ -205,6 +226,12 @@ class Interpreter {
     });
 
     try {
+      // static data members: one shared variable each (an out-of-line definition below may initialize it).
+      for (const def of new Set(this.program.structs.values())) {
+        for (const s of def.statics ?? []) {
+          this.declare({ name: `${def.name}::${s.name}`, type: s.type, init: s.init, line: 1 }, this.globals, 'static');
+        }
+      }
       for (const g of this.program.globals) this.execDecl(g as Stmt & { type: 'Decl' }, this.globals, 'static');
       const main = this.program.functions.get('main');
       if (!main) {
@@ -232,6 +259,25 @@ class Interpreter {
           explanation: `Tracel stopped the program after ${this.stepLimit} steps. This may be an infinite loop.`,
           context: [],
         });
+      }
+      if (err instanceof CppThrow) {
+        const what = this.describeThrown(err.value);
+        const error: TraceError = {
+          phase: 'runtime',
+          kind: 'UncaughtException',
+          line: err.line,
+          message: `Uncaught exception: ${what}`,
+          title: 'Uncaught exception',
+          explanation: `The program threw ${what} and no catch block handled it, so it stopped.`,
+          context: [],
+        };
+        this.record(err.line, 'exception', error);
+        return done('error', error);
+      }
+      if (err instanceof GotoSignal) {
+        const error: TraceError = { phase: 'runtime', kind: 'GotoError', line, message: `goto ${err.label}: no such label in this function's enclosing blocks.`, title: 'Invalid goto', explanation: `goto can only jump to a label in the same block or an enclosing one, and '${err.label}' isn't there.`, context: [] };
+        this.record(line, 'exception', error);
+        return done('error', error);
       }
       if (err instanceof RuntimeErr) {
         const error: TraceError = {
@@ -378,6 +424,16 @@ class Interpreter {
         return { ...base, kind: 'cpp_deque', typeName: `std::deque<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
       case 'set':
         return { ...base, kind: 'set', typeName: `std::${b.ordered ? 'set' : 'unordered_set'}<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
+      case 'sstream':
+        return {
+          ...base,
+          kind: 'struct',
+          typeName: 'std::stringstream',
+          fields: [
+            ['buffer', { k: 'str', v: b.buf ?? '' }],
+            ['read position', { k: 'int', v: String(b.pos ?? 0) }],
+          ],
+        };
       case 'pq':
         return { ...base, kind: 'cpp_priority_queue', typeName: `std::priority_queue<${elem}>`, items: b.items.map((v) => this.toValue(v, b.elemType)) };
       case 'map':
@@ -442,8 +498,17 @@ class Interpreter {
   private makeDefault(type: TypeInfo, region: Block['region'], owner: Block[] | null, zero = false): RV {
     if (type.ptr) return zero ? { t: 'ptr', b: null, o: 0, ty: this.pointee(type) } : { t: 'uninit', ty: type };
     if (type.base === 'string') return { t: 'str', v: '' };
+    if (STREAM_TYPES.has(type.base)) {
+      const b = this.alloc('sstream', region, { ...INT_TYPE, base: 'char' });
+      b.buf = '';
+      b.pos = 0;
+      owner?.push(b);
+      return { t: 'agg', b };
+    }
     if (CONTAINERS.has(type.base)) {
       const kinds: Record<string, BlockKind> = {
+        multiset: 'set',
+        multimap: 'map',
         stack: 'cpp_stack',
         queue: 'cpp_queue',
         deque: 'deque',
@@ -457,6 +522,14 @@ class Interpreter {
       if (b.kind === 'map') b.valType = type.args[1] ?? INT_TYPE;
       b.ordered = type.base === 'map' || type.base === 'set';
       if (b.kind === 'pq') b.minHeap = type.args[2]?.base === 'greater';
+      b.multi = type.base === 'multiset' || type.base === 'multimap';
+      if (type.base === 'multiset') b.ordered = true;
+      if (type.base === 'multimap') b.ordered = true;
+      // A comparator class as a template argument: priority_queue<T, vector<T>, Cmp>, set<T, Cmp>
+      const cmpType = b.kind === 'pq' ? type.args[2] : b.kind === 'set' ? type.args[1] : b.kind === 'map' ? type.args[2] : undefined;
+      const cmpDef = cmpType && this.program.structs.get(cmpType.base);
+      if (cmpDef) b.cmp = { t: 'agg', b: this.construct(cmpDef, [], 'heap', null, this.currentLine()) };
+      else if (cmpType?.base === 'greater' && b.kind !== 'pq') b.cmp = { t: 'cmp', greater: true };
       owner?.push(b);
       return { t: 'agg', b };
     }
@@ -538,6 +611,9 @@ class Interpreter {
       const y = b.t === 'str' ? b.v : String.fromCharCode(this.toNum(b));
       return x < y ? -1 : x > y ? 1 : 0;
     }
+    if (a.t === 'agg' && b.t === 'agg' && a.b.kind === 'struct' && this.findMethod(a.b.struct!, 'operator<', 1)) {
+      return this.truthy(this.callOperator('<', a, b)!) ? -1 : this.truthy(this.callOperator('<', b, a)!) ? 1 : 0;
+    }
     if (a.t === 'agg' && b.t === 'agg') {
       const xs = a.b.kind === 'struct' ? [...a.b.fields.values()] : a.b.items;
       const ys = b.b.kind === 'struct' ? [...b.b.fields.values()] : b.b.items;
@@ -559,6 +635,10 @@ class Interpreter {
   private lessThan(a: RV, b: RV, cmp?: RV): boolean {
     if (cmp?.t === 'fn') return this.truthy(this.callFunction(cmp.fn, [a, b], this.currentLine(), cmp.self, cmp.closure));
     if (cmp?.t === 'cmp' && cmp.greater) return this.compareRV(a, b) > 0;
+    if (cmp?.t === 'agg' && cmp.b.kind === 'struct') {
+      const call = this.findMethod(cmp.b.struct!, 'operator()', 2);
+      if (call) return this.truthy(this.callFunction(call, [a, b], this.currentLine(), cmp.b));
+    }
     return this.compareRV(a, b) < 0;
   }
 
@@ -585,7 +665,7 @@ class Interpreter {
   /** Inserts (or, with overwrite, replaces) a map entry, keeping std::map sorted. */
   private mapPut(b: Block, k: RV, v: RV, overwrite: boolean): number {
     const key = this.stored(k, b.elemType);
-    const at = this.mapFind(b, this.keyOf(key));
+    const at = b.multi ? -1 : this.mapFind(b, this.keyOf(key));
     if (at >= 0) {
       if (overwrite) b.entries[at]!.v = this.stored(v, b.valType ?? INT_TYPE);
       return at;
@@ -593,7 +673,8 @@ class Interpreter {
     const entry = { k: key, v: this.stored(v, b.valType ?? INT_TYPE) };
     if (!b.ordered) return b.entries.push(entry) - 1;
     let i = 0;
-    while (i < b.entries.length && this.compareRV(b.entries[i]!.k, key) < 0) i++;
+    // multimap keeps equal keys in insertion order (after existing ones).
+    while (i < b.entries.length && (b.cmp ? !this.lessThan(key, b.entries[i]!.k, b.cmp) : this.compareRV(b.entries[i]!.k, key) <= (b.multi ? 0 : -1))) i++;
     b.entries.splice(i, 0, entry);
     return i;
   }
@@ -601,11 +682,11 @@ class Interpreter {
   private setPut(b: Block, v: RV): boolean {
     const item = this.stored(v, b.elemType);
     const key = this.keyOf(item);
-    if (b.items.some((x) => this.keyOf(x) === key)) return false;
-    if (!b.ordered) b.items.push(item);
+    if (!b.multi && b.items.some((x) => this.keyOf(x) === key)) return false;
+    if (!b.ordered && !b.cmp) b.items.push(item);
     else {
       let i = 0;
-      while (i < b.items.length && this.compareRV(b.items[i]!, item) < 0) i++;
+      while (i < b.items.length && (b.cmp ? !this.lessThan(item, b.items[i]!, b.cmp) : this.compareRV(b.items[i]!, item) <= (b.multi ? 0 : -1))) i++;
       b.items.splice(i, 0, item);
     }
     return true;
@@ -667,6 +748,11 @@ class Interpreter {
     if (!argExprs.length) return;
     const args = argExprs.map((a) => this.evalR(a));
     const [a0, a1] = args;
+    if (b.kind === 'sstream') {
+      b.buf = a0?.t === 'str' ? a0.v : '';
+      b.pos = 0;
+      return;
+    }
     if (a0?.t === 'agg') {
       const copy = this.copyAgg(a0.b, b.region, null);
       this.blocks.delete(copy.id);
@@ -797,6 +883,20 @@ class Interpreter {
       this.assignAgg(lv.b, value);
       return;
     }
+    if ('f' in lv && lv.b.struct?.isUnion) {
+      // A union's members share storage: writing one sets them all (converted, not bit-reinterpreted).
+      for (const f of lv.b.struct.fields) lv.b.fields.set(f.name, this.coerce(value, f.type));
+      return;
+    }
+    const bits = 'f' in lv ? lv.b.struct?.fields.find((x) => x.name === lv.f)?.bits : undefined;
+    if ('f' in lv && bits) {
+      // A bit-field keeps only its low bits.
+      const ty = this.fieldType(lv.b, lv.f);
+      let n = Math.trunc(this.toNum(value)) & (2 ** bits - 1);
+      if (!ty.unsigned && n >= 2 ** (bits - 1)) n -= 2 ** bits;
+      lv.b.fields.set(lv.f, this.coerce({ t: 'int', v: n }, ty));
+      return;
+    }
     if ('f' in lv) {
       const ty = this.fieldType(lv.b, lv.f);
       const cur = lv.b.fields.get(lv.f);
@@ -867,13 +967,16 @@ class Interpreter {
   private evalL(e: Expr): LV {
     switch (e.type) {
       case 'Ident': {
-        const lv = this.lookup(e.name) ?? this.memberOfSelf(e.name);
+        const lv = this.lookup(e.name) ?? this.memberOfSelf(e.name) ?? this.staticMember(e.name);
         if (!lv) throw new RuntimeErr('NameError', 'Unknown name', `'${e.name}' was not declared.`, `'${e.name}' is used here, but no variable with that name exists at this point.`);
         return { ...lv, name: e.name };
       }
       case 'Index': {
         const obj = this.evalR(e.object);
         const name = this.exprName(e.object);
+        if (obj.t === 'agg' && obj.b.kind === 'map' && obj.b.multi) {
+          throw new RuntimeErr('TypeError', 'No [] on multimap', 'std::multimap has no operator[]; use insert() and find().');
+        }
         if (obj.t === 'agg' && obj.b.kind === 'map') {
           // m[key] inserts a default value when the key is missing, like C++.
           const key = this.coerce(this.evalAs(e.index, obj.b.elemType), obj.b.elemType);
@@ -906,6 +1009,11 @@ class Interpreter {
           b = v.b;
         }
         if (b.kind !== 'struct') throw new RuntimeErr('TypeError', 'Not a struct', `${name ?? 'This value'} has no field '${e.name}'.`);
+        if (!b.fields.has(e.name)) {
+          // obj.count for a static member
+          const st = this.globals.vars.get(`${b.struct!.name}::${e.name}`);
+          if (st) return st;
+        }
         return { b, f: e.name, name: `${name ?? '?'}${e.arrow ? '->' : '.'}${e.name}` };
       }
       case 'Unary':
@@ -1017,7 +1125,9 @@ class Interpreter {
 
   private truthy(v: RV): boolean {
     if (v.t === 'ptr') return v.b !== null;
-    if (v.t === 'str' || v.t === 'agg' || v.t === 'stream' || v.t === 'fn' || v.t === 'cmp') return true;
+    if (v.t === 'stream') return !v.failed;
+    if (v.t === 'agg' && v.b.kind === 'sstream') return !v.b.failed;
+    if (v.t === 'str' || v.t === 'agg' || v.t === 'fn' || v.t === 'cmp') return true;
     return this.toNum(v) !== 0;
   }
 
@@ -1076,7 +1186,7 @@ class Interpreter {
         if (e.name === 'INT_MAX') return { t: 'int', v: 2147483647 };
         if (e.name === 'INT_MIN') return { t: 'int', v: -2147483648 };
         if (e.name === 'npos' && !this.lookup(e.name)) return { t: 'int', v: -1 };
-        if (!this.lookup(e.name) && !this.memberOfSelf(e.name)) {
+        if (!this.lookup(e.name) && !this.memberOfSelf(e.name) && !this.staticMember(e.name)) {
           const fn = this.program.functions.get(e.name);
           if (fn) return { t: 'fn', fn, closure: [] }; // a function passed as a comparator
         }
@@ -1204,10 +1314,23 @@ class Interpreter {
   private evalBinary(e: Expr & { type: 'Binary' }): RV {
     const left = this.evalR(e.left);
     if (left.t === 'stream') return this.streamOp(left, e.op, e.right);
+    if (left.t === 'agg' && left.b.kind === 'sstream') return this.sstreamOp(left.b, e.op, e.right);
     return this.arith(e.op, left, this.evalR(e.right));
   }
 
   private arith(op: string, a: RV, b: RV): RV {
+    if ((a.t === 'agg' && a.b.kind === 'struct') || (b.t === 'agg' && b.b.kind === 'struct')) {
+      const overloaded = this.callOperator(op, a, b);
+      if (overloaded) return overloaded;
+      if (op === '!=') {
+        const eq = this.callOperator('==', a, b);
+        if (eq) return { t: 'bool', v: !this.truthy(eq) };
+      }
+      if (op === '>' || op === '<=' || op === '>=') {
+        const less = this.callOperator('<', op === '>' || op === '<=' ? b : a, op === '>' || op === '<=' ? a : b);
+        if (less) return { t: 'bool', v: op === '>' ? this.truthy(less) : !this.truthy(less) };
+      }
+    }
     if ((a.t === 'iter' || a.t === 'siter') && (b.t === 'iter' || b.t === 'siter')) {
       const same = (a.t === 'iter' ? a.b : a.lv.b) === (b.t === 'iter' ? b.b : b.lv.b);
       if (op === '==') return { t: 'bool', v: same && a.o === b.o };
@@ -1491,6 +1614,13 @@ class Interpreter {
     if (e.callee.type === 'Member') return this.callMethod(e.callee, e.args);
     if (e.callee.type !== 'Ident') throw new RuntimeErr('TypeError', 'Not callable', 'This expression is not a function.');
     const name = e.callee.name;
+    if (name.includes('::')) {
+      // Base::method() inside a derived class, or Class::staticFunction()
+      const [ownerName, member] = name.split('::') as [string, string];
+      const def = this.program.structs.get(ownerName);
+      const m = def && this.findMethod(def, member, e.args.length);
+      if (m) return this.callFunction(m, this.evalArgs(m, e.args), e.line, m.isStatic ? undefined : this.stack[this.stack.length - 1]?.self);
+    }
     const fn = this.program.functions.get(name);
     if (fn) return this.callFunction(fn, this.evalArgs(fn, e.args), e.line);
     // Node(1, 2) or Node{1, 2}: a temporary object.
@@ -1509,7 +1639,16 @@ class Interpreter {
         const [x, y] = e.args.map((a) => this.evalR(a));
         return { t: 'bool', v: this.lessThan(x!, y!, v) };
       }
+      if (v.t === 'agg' && v.b.kind === 'struct') {
+        // A function object: cmp(a, b) calls cmp.operator()(a, b).
+        const call = this.findMethod(v.b.struct!, 'operator()', e.args.length);
+        if (call) return this.callFunction(call, this.evalArgs(call, e.args), e.line, v.b);
+      }
     }
+    // A static member called by its bare name from inside its class.
+    const ownerName = this.stack[this.stack.length - 1]?.owner;
+    const sm = ownerName && this.findMethod(this.program.structs.get(ownerName)!, name, e.args.length);
+    if (sm) return this.callFunction(sm, this.evalArgs(sm, e.args), e.line);
     return this.builtin(name, e.args);
   }
 
@@ -1526,9 +1665,71 @@ class Interpreter {
     });
   }
 
+  /** Looks a method up on the class, then its bases: overrides on the object's real class win. */
   private findMethod(def: StructDef, name: string, arity: number): FunctionDef | undefined {
     const list = def.methods.get(name);
-    return list?.find((m) => m.params.length === arity) ?? (list?.length === 1 ? list[0] : undefined);
+    const own = list?.find((m) => m.params.length === arity) ?? (list?.length === 1 ? list[0] : undefined);
+    if (own) return own;
+    for (const base of def.bases ?? []) {
+      const b = this.program.structs.get(base);
+      const found = b && this.findMethod(b, name, arity);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  /** Is `def` the class `name` or derived from it? */
+  private isA(def: StructDef | undefined, name: string): boolean {
+    if (!def) return false;
+    if (def.name === name) return true;
+    return (def.bases ?? []).some((b) => this.isA(this.program.structs.get(b), name));
+  }
+
+  /** A static member variable visible from the current function (its class or a base). */
+  private staticMember(name: string): LV | undefined {
+    const frame = this.stack[this.stack.length - 1];
+    const ownerName = frame?.owner ?? frame?.self?.struct?.name;
+    const visit = (def: StructDef | undefined): LV | undefined => {
+      if (!def) return undefined;
+      const lv = this.globals.vars.get(`${def.name}::${name}`);
+      if (lv) return lv;
+      for (const b of def.bases ?? []) {
+        const found = visit(this.program.structs.get(b));
+        if (found) return found;
+      }
+      return undefined;
+    };
+    return ownerName ? visit(this.program.structs.get(ownerName)) : undefined;
+  }
+
+  /** Builds a standard exception object, e.g. out_of_range("index 5"). */
+  private stdException(name: string, message: string): RV {
+    const def = this.program.structs.get(name)!;
+    const b = (this.makeDefault({ ...INT_TYPE, base: name }, 'heap', null) as RV & { t: 'agg' }).b;
+    b.struct = def;
+    b.fields.set('message', { t: 'str', v: message });
+    return { t: 'agg', b };
+  }
+
+  private describeThrown(v: RV): string {
+    if (v.t === 'agg' && v.b.kind === 'struct') {
+      const msg = v.b.fields.get('message');
+      return `${v.b.struct!.name}${msg?.t === 'str' && msg.v ? `("${msg.v}")` : ''}`;
+    }
+    if (v.t === 'str') return `"${v.v}"`;
+    return this.coutText(v);
+  }
+
+  /** Calls a user operator overload if one applies: a.operator+(b) or operator+(a, b). */
+  private callOperator(op: string, a: RV, b: RV | undefined): RV | undefined {
+    const name = `operator${op}`;
+    if (a.t === 'agg' && a.b.kind === 'struct') {
+      const m = this.findMethod(a.b.struct!, name, b ? 1 : 0);
+      if (m) return this.callFunction(m, b ? [b] : [], this.currentLine(), a.b);
+    }
+    const fn = this.program.functions.get(name);
+    if (fn && fn.params.length === (b ? 2 : 1) && (a.t === 'agg' || b?.t === 'agg')) return this.callFunction(fn, b ? [a, b] : [a], this.currentLine());
+    return undefined;
   }
 
   /**
@@ -1539,6 +1740,7 @@ class Interpreter {
   private construct(def: StructDef, argExprs: Expr[], region: Block['region'], owner: Block[] | null, line: number): Block {
     const b = (this.makeDefault({ ...INT_TYPE, base: def.name }, region, owner) as RV & { t: 'agg' }).b;
     const ctors = def.methods.get(def.name);
+    if (!ctors?.length) this.runBaseConstructors(def, b, [], line);
     if (ctors?.length) {
       const ctor = ctors.find((c) => c.params.length === argExprs.length);
       if (!ctor) {
@@ -1549,6 +1751,25 @@ class Interpreter {
       this.fillFromList(b, argExprs);
     }
     return b;
+  }
+
+  /** Base-class constructors run first: the ones named in the initializer list, or default ones. */
+  private runBaseConstructors(def: StructDef, self: Block, inits: { name: string; args: Expr[] }[], line: number) {
+    for (const baseName of def.bases ?? []) {
+      const base = this.program.structs.get(baseName);
+      if (!base) continue;
+      const named = inits.find((i) => i.name === baseName);
+      const ctors = base.methods.get(base.name);
+      if (named) {
+        const ctor = ctors?.find((c) => c.params.length === named.args.length);
+        if (ctor) this.callFunction(ctor, this.evalArgs(ctor, named.args), line, self);
+        else if (named.args.length && STD_EXCEPTIONS[baseName] !== undefined) self.fields.set('message', this.evalR(named.args[0]!));
+        continue;
+      }
+      const dflt = ctors?.find((c) => c.params.length === 0);
+      if (dflt) this.callFunction(dflt, [], line, self);
+      else this.runBaseConstructors(base, self, [], line);
+    }
   }
 
   private callFunction(fn: FunctionDef, args: (RV | LV)[], callLine: number, self?: Block, closure?: Scope[]): RV {
@@ -1566,7 +1787,10 @@ class Interpreter {
       self,
       closure,
       returnType: fn.returnType,
+      owner: fn.owner,
     };
+    if (fn.isStatic) self = undefined;
+    frame.self = self;
     if (self) {
       const thisCell = this.alloc('scalar', 'stack', { ...INT_TYPE, base: self.struct!.name, ptr: 1 }, [{ t: 'ptr', b: self, o: 0, ty: { ...INT_TYPE, base: self.struct!.name } }], undefined, 'this');
       scope.owned.push(thisCell);
@@ -1593,10 +1817,24 @@ class Interpreter {
     let result: RV = { t: 'void' };
     this.record(fn.line, 'call');
     try {
-      for (const init of fn.inits ?? []) this.runInitializer(self!, init.name, init.args, fn.line);
+      if (fn.kind === 'ctor' && self) {
+        const ownerDef = this.program.structs.get(fn.owner!)!;
+        this.runBaseConstructors(ownerDef, self, fn.inits ?? [], fn.line);
+      }
+      for (const init of fn.inits ?? []) {
+        if (this.program.structs.get(fn.owner ?? '')?.bases?.includes(init.name)) continue; // a base, already built
+        this.runInitializer(self!, init.name, init.args, fn.line);
+      }
       this.execBlockBody(fn.body.body, frame);
       frame.line = fn.body.endLine;
     } catch (sig) {
+      if (sig instanceof CppThrow) {
+        // The exception leaves this function: unwind its frame.
+        this.stack.pop();
+        for (const s of frame.scopes) this.releaseScope(s);
+        throw sig;
+      }
+      if (sig instanceof GotoSignal) throw new RuntimeErr('GotoError', 'Invalid goto', `goto ${sig.label}: there is no label '${sig.label}' in ${frame.name}().`);
       if (!(sig instanceof ReturnSignal)) throw sig;
       result = sig.value;
     }
@@ -1634,8 +1872,10 @@ class Interpreter {
     // User-defined member functions: obj.method() and ptr->method().
     const target = m.arrow ? this.evalR(m.object) : this.evalR(m.object);
     const objBlock = target.t === 'ptr' && m.arrow ? this.deref(target, this.exprName(m.object)) : target.t === 'agg' ? target.b : undefined;
+    if (objBlock?.kind === 'sstream') return this.streamMethod(objBlock, m.name, argExprs);
     if (objBlock?.kind === 'struct') {
       const method = this.findMethod(objBlock.struct!, m.name, argExprs.length);
+      if (!method && m.name === 'what' && this.isAnyStdException(objBlock.struct)) return objBlock.fields.get('message') ?? { t: 'str', v: '' };
       if (!method) throw new RuntimeErr('TypeError', 'Unknown method', `'${objBlock.struct!.name}' has no member function '${m.name}' that takes ${argExprs.length} argument${argExprs.length === 1 ? '' : 's'}.`);
       return this.callFunction(method, this.evalArgs(method, argExprs), m.line, objBlock);
     }
@@ -1670,8 +1910,9 @@ class Interpreter {
       switch (m.name) {
         case 'count':
         case 'contains': {
-          const found = this.mapFind(b, this.keyOf(keyArg())) >= 0;
-          return m.name === 'count' ? { t: 'int', v: found ? 1 : 0 } : { t: 'bool', v: found };
+          const key = this.keyOf(keyArg());
+          const n = b.entries.filter((e) => this.keyOf(e.k) === key).length;
+          return m.name === 'count' ? { t: 'int', v: n } : { t: 'bool', v: n > 0 };
         }
         case 'find': {
           const at = this.mapFind(b, this.keyOf(keyArg()));
@@ -1685,16 +1926,20 @@ class Interpreter {
           return { t: 'iter', b, o: b.entries.length - 1 };
         case 'at': {
           const k = keyArg();
-          if (this.mapFind(b, this.keyOf(k)) < 0) {
-            throw new RuntimeErr('OutOfRange', 'Key not found', `${name ?? 'The map'}.at() was called with a key that isn't in the map.`, 'at() throws std::out_of_range for a missing key. Use count() or find() to check first.');
-          }
+          if (this.mapFind(b, this.keyOf(k)) < 0) throw new CppThrow(this.stdException('out_of_range', 'map::at'), this.currentLine());
           return { b, key: this.keyOf(k), name };
         }
         case 'erase': {
           const first = this.evalR(argExprs[0]!);
-          const at = first.t === 'iter' ? first.o : this.mapFind(b, this.keyOf(this.coerce(first, b.elemType)));
-          if (at >= 0 && at < b.entries.length) b.entries.splice(at, 1);
-          return { t: 'int', v: at >= 0 ? 1 : 0 };
+          if (first.t === 'iter') {
+            if (first.o >= 0 && first.o < b.entries.length) b.entries.splice(first.o, 1);
+            return { t: 'int', v: 1 };
+          }
+          // erase(key) removes every entry with that key (several in a multimap).
+          const key = this.keyOf(this.coerce(first, b.elemType));
+          const before = b.entries.length;
+          b.entries = b.entries.filter((e) => this.keyOf(e.k) !== key);
+          return { t: 'int', v: before - b.entries.length };
         }
         case 'insert':
         case 'emplace': {
@@ -1722,8 +1967,10 @@ class Interpreter {
         case 'insert':
         case 'emplace':
           return { t: 'bool', v: this.setPut(b, valArg()) };
-        case 'count':
-          return { t: 'int', v: findAt(valArg()) >= 0 ? 1 : 0 };
+        case 'count': {
+          const key = this.keyOf(valArg());
+          return { t: 'int', v: b.items.filter((x) => this.keyOf(x) === key).length };
+        }
         case 'contains':
           return { t: 'bool', v: findAt(valArg()) >= 0 };
         case 'find': {
@@ -1732,9 +1979,14 @@ class Interpreter {
         }
         case 'erase': {
           const first = this.evalR(argExprs[0]!);
-          const at = first.t === 'iter' ? first.o : findAt(this.coerce(first, b.elemType));
-          if (at >= 0 && at < b.items.length) b.items.splice(at, 1);
-          return { t: 'int', v: at >= 0 ? 1 : 0 };
+          if (first.t === 'iter') {
+            if (first.o >= 0 && first.o < b.items.length) b.items.splice(first.o, 1);
+            return { t: 'int', v: 1 };
+          }
+          const key = this.keyOf(this.coerce(first, b.elemType));
+          const before = b.items.length;
+          b.items = b.items.filter((x) => this.keyOf(x) !== key);
+          return { t: 'int', v: before - b.items.length };
         }
         case 'begin':
           return { t: 'iter', b, o: 0 };
@@ -1798,8 +2050,14 @@ class Interpreter {
           return lastOf('back()');
         case 'front':
           return firstOf('front()');
-        case 'at':
-          return { b, i: this.toNum(args()[0]!), name };
+        case 'at': {
+          // Unlike [], at() checks the index and throws std::out_of_range.
+          const i = this.toNum(args()[0]!);
+          if (i < 0 || i >= b.items.length) {
+            throw new CppThrow(this.stdException('out_of_range', `vector::at: index ${i} is out of range for size ${b.items.length}`), this.currentLine());
+          }
+          return { b, i, name };
+        }
         case 'begin':
           return { t: 'ptr', b, o: 0, ty: b.elemType };
         case 'end':
@@ -1864,6 +2122,10 @@ class Interpreter {
       }
     }
     throw new RuntimeErr('Unsupported', 'Unsupported method', `std::${kindLabel}.${m.name}() isn't supported yet.`);
+  }
+
+  private isAnyStdException(def: StructDef | undefined): boolean {
+    return this.isA(def, 'exception');
   }
 
   private stringMethod(s: string, m: Expr & { type: 'Member' }, argExprs: Expr[]): RV | LV {
@@ -1954,9 +2216,10 @@ class Interpreter {
         let n = 0;
         specs.forEach((spec, i) => {
           const target = argExprs[i + 1];
-          const tok = this.stdin[this.stdinPos];
+          const read = Interpreter.readToken(this.stdinText, this.stdinPos);
+          const tok = read.tok;
           if (!target || tok === undefined) return;
-          this.stdinPos++;
+          this.stdinPos = read.pos;
           const p = this.evalR(target);
           const v: RV = spec === '%s' ? { t: 'str', v: tok } : spec === '%c' ? { t: 'char', v: tok.charCodeAt(0) } : /f/.test(spec) ? { t: 'float', v: Number(tok) } : { t: 'int', v: parseInt(tok, 10) || 0 };
           if (p.t === 'ptr') this.write({ b: this.deref(p), i: p.o }, v);
@@ -1965,8 +2228,23 @@ class Interpreter {
         return { t: 'int', v: n };
       }
       case 'getline': {
-        const target = argExprs[1];
-        if (target) this.write(this.evalL(target), { t: 'str', v: this.stdin[this.stdinPos++] ?? '' });
+        // getline(cin, line) / getline(ss, token, ',')
+        const source = this.evalR(argExprs[0]!);
+        const target = argExprs[1] ? this.evalL(argExprs[1]) : null;
+        const delimV = argExprs[2] ? this.evalR(argExprs[2]) : undefined;
+        const delim = delimV ? (delimV.t === 'char' ? String.fromCharCode(delimV.v) : delimV.t === 'str' ? delimV.v : '\n') : '\n';
+        if (source.t === 'agg' && source.b.kind === 'sstream') {
+          const b = source.b;
+          const { line, pos } = Interpreter.readUntil(b.buf ?? '', b.pos ?? 0, delim);
+          b.pos = pos;
+          if (line === undefined) b.failed = true;
+          else if (target) this.write(target, { t: 'str', v: line });
+          return source;
+        }
+        const { line, pos } = Interpreter.readUntil(this.stdinText, this.stdinPos, delim);
+        this.stdinPos = pos;
+        if (line === undefined) return { t: 'stream', name: 'cin', failed: true };
+        if (target) this.write(target, { t: 'str', v: line.replace(/\r$/, '') });
         return { t: 'stream', name: 'cin' };
       }
       case 'malloc':
@@ -2046,6 +2324,59 @@ class Interpreter {
         b.items.splice(lo, slice.length, ...slice);
         return { t: 'void' };
       }
+      case 'next_permutation':
+      case 'prev_permutation': {
+        const [from, to] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        const a = b.items;
+        const before = (x: RV, y: RV) => (name === 'next_permutation' ? this.compareRV(x, y) < 0 : this.compareRV(x, y) > 0);
+        let i = hi - 2;
+        while (i >= lo && !before(a[i]!, a[i + 1]!)) i--;
+        if (i < lo) {
+          a.splice(lo, hi - lo, ...a.slice(lo, hi).reverse());
+          return { t: 'bool', v: false };
+        }
+        let j = hi - 1;
+        while (!before(a[i]!, a[j]!)) j--;
+        [a[i], a[j]] = [a[j]!, a[i]!];
+        a.splice(i + 1, hi - i - 1, ...a.slice(i + 1, hi).reverse());
+        return { t: 'bool', v: true };
+      }
+      case 'unique': {
+        const [from, to] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        let w = lo;
+        for (let r = lo; r < hi; r++) if (r === lo || this.keyOf(b.items[r]!) !== this.keyOf(b.items[w - 1]!)) b.items[w++] = b.items[r]!;
+        return { t: 'ptr', b, o: w, ty: b.elemType };
+      }
+      case 'count_if':
+      case 'find_if':
+      case 'any_of':
+      case 'all_of':
+      case 'none_of': {
+        const [from, to, pred] = args();
+        const { b, lo, hi } = this.range(name, from, to);
+        const test = (x: RV) => this.truthy(this.callValue(pred!, [x]));
+        const slice = b.items.slice(lo, hi);
+        if (name === 'count_if') return { t: 'int', v: slice.filter(test).length };
+        if (name === 'find_if') {
+          const at = slice.findIndex(test);
+          return { t: 'ptr', b, o: at < 0 ? hi : lo + at, ty: b.elemType };
+        }
+        if (name === 'any_of') return { t: 'bool', v: slice.some(test) };
+        if (name === 'all_of') return { t: 'bool', v: slice.every(test) };
+        return { t: 'bool', v: !slice.some(test) };
+      }
+      case '__builtin_popcount':
+      case '__builtin_popcountll': {
+        let n = BigInt.asUintN(64, this.toBig(this.evalR(argExprs[0]!)));
+        let c = 0;
+        while (n) {
+          c += Number(n & 1n);
+          n >>= 1n;
+        }
+        return { t: 'int', v: c };
+      }
       case 'max_element':
       case 'min_element': {
         const [from, to, cmp] = args();
@@ -2058,10 +2389,10 @@ class Interpreter {
         return { t: 'ptr', b, o: hi > lo ? best : hi, ty: b.elemType };
       }
       case 'accumulate': {
-        const [from, to, init] = args();
+        const [from, to, init, op] = args();
         const { b, lo, hi } = this.range(name, from, to);
         let sum = init ?? { t: 'int', v: 0 };
-        for (let i = lo; i < hi; i++) sum = this.arith('+', sum, b.items[i]!);
+        for (let i = lo; i < hi; i++) sum = op ? this.callValue(op, [sum, b.items[i]!]) : this.arith('+', sum, b.items[i]!);
         return sum;
       }
       case 'count':
@@ -2119,7 +2450,10 @@ class Interpreter {
       case 'atoi': {
         const v = this.evalR(argExprs[0]!);
         const n = parseInt(v.t === 'str' ? v.v : '', 10);
-        if (Number.isNaN(n)) throw new RuntimeErr('InvalidArgument', 'Invalid number', `${name}() got text that isn't a number.`);
+        if (Number.isNaN(n)) {
+          if (name === 'atoi') return { t: 'int', v: 0 };
+          throw new CppThrow(this.stdException('invalid_argument', name), this.currentLine());
+        }
         return name === 'stoi' || name === 'atoi' ? { t: 'int', v: n | 0 } : { t: 'long', v: BigInt(n) };
       }
       case 'isdigit':
@@ -2167,6 +2501,17 @@ class Interpreter {
         throw new ReturnSignal({ t: 'int', v: num(0) });
     }
     throw new RuntimeErr('NameError', 'Unknown function', `'${name}' is not a function Tracel knows about.`, `There is no function named '${name}' in this program, and it isn't one of the library functions Tracel supports.`);
+  }
+
+  /** Calls a lambda, function or function object with already-evaluated arguments. */
+  private callValue(f: RV, args: RV[]): RV {
+    if (f.t === 'fn') return this.callFunction(f.fn, args, this.currentLine(), f.self, f.closure);
+    if (f.t === 'agg' && f.b.kind === 'struct') {
+      const call = this.findMethod(f.b.struct!, 'operator()', args.length);
+      if (call) return this.callFunction(call, args, this.currentLine(), f.b);
+    }
+    if (f.t === 'cmp' && args.length === 2) return { t: 'bool', v: this.lessThan(args[0]!, args[1]!, f) };
+    throw new RuntimeErr('TypeError', 'Not callable', 'Expected a function, lambda or function object here.');
   }
 
   /** A [first, last) range of one container or array, from two pointers/iterators. */
@@ -2264,28 +2609,111 @@ class Interpreter {
     return s;
   }
 
+  /** Reads the next whitespace-separated token from a text with a cursor (cin, stringstream). */
+  private static readToken(text: string, pos: number): { tok?: string; pos: number } {
+    let i = pos;
+    while (i < text.length && /\s/.test(text[i]!)) i++;
+    if (i >= text.length) return { pos: i };
+    const start = i;
+    while (i < text.length && !/\s/.test(text[i]!)) i++;
+    return { tok: text.slice(start, i), pos: i };
+  }
+
+  /** Reads up to (and past) the delimiter; undefined at the end of the text. */
+  private static readUntil(text: string, pos: number, delim: string): { line?: string; pos: number } {
+    if (pos >= text.length) return { pos };
+    const at = text.indexOf(delim, pos);
+    return at < 0 ? { line: text.slice(pos), pos: text.length } : { line: text.slice(pos, at), pos: at + 1 };
+  }
+
+  /** Stores a token read by >> into a variable, converted to its type. */
+  private storeToken(lv: LV, tok: string): boolean {
+    const cur = 'whole' in lv ? null : this.read(lv);
+    const ty = cur?.t === 'uninit' ? cur.ty : 'f' in lv ? this.fieldType(lv.b, lv.f) : 'key' in lv ? (lv.b.valType ?? INT_TYPE) : 'strOf' in lv ? { ...INT_TYPE, base: 'char' } : lv.b.elemType;
+    if (ty.base === 'string') this.write(lv, { t: 'str', v: tok });
+    else if (ty.base === 'char') this.write(lv, { t: 'char', v: tok.charCodeAt(0) });
+    else {
+      const n = Number(tok);
+      if (Number.isNaN(n)) return false;
+      this.write(lv, isFloatBase(ty.base) ? { t: 'float', v: n } : isWideBase(ty.base) ? { t: 'long', v: BigInt(Math.trunc(n)) } : { t: 'int', v: Math.trunc(n) });
+    }
+    return true;
+  }
+
   private streamOp(stream: RV & { t: 'stream' }, op: string, right: Expr): RV {
     if (stream.name === 'cin') {
       if (op !== '>>') throw new RuntimeErr('TypeError', 'Invalid input', 'Use >> to read from cin.');
       const lv = this.evalL(right);
-      const tok = this.stdin[this.stdinPos++];
-      if (tok === undefined) return stream;
-      const cur = 'whole' in lv ? null : this.read(lv);
-      const ty = cur?.t === 'uninit' ? cur.ty : 'f' in lv ? this.fieldType(lv.b, lv.f) : 'key' in lv ? (lv.b.valType ?? INT_TYPE) : 'strOf' in lv ? { ...INT_TYPE, base: 'char' } : lv.b.elemType;
-      const v: RV = ty.base === 'string' ? { t: 'str', v: tok } : ty.base === 'char' ? { t: 'char', v: tok.charCodeAt(0) } : isFloatBase(ty.base) ? { t: 'float', v: Number(tok) } : { t: 'int', v: parseInt(tok, 10) || 0 };
-      this.write(lv, v);
+      if (stream.failed) return stream;
+      const { tok, pos } = Interpreter.readToken(this.stdinText, this.stdinPos);
+      this.stdinPos = pos;
+      // At the end of the input the stream fails, so while (cin >> x) stops.
+      if (tok === undefined || !this.storeToken(lv, tok)) return { ...stream, failed: true };
       return stream;
     }
     if (op !== '<<') throw new RuntimeErr('TypeError', 'Invalid output', 'Use << to write to cout.');
     const v = this.evalR(right);
-    if (v.t === 'manip') {
-      if (v.name === 'endl') this.stdout += '\n';
-      else if (v.name === 'fixed') this.coutFixed = true;
-      else if (v.name === 'setprecision') this.coutPrecision = v.arg ?? 6;
-      return stream;
-    }
-    if (stream.name === 'cout') this.stdout += this.coutText(v);
+    const text = this.outputText(v, stream);
+    if (text !== null && stream.name === 'cout') this.stdout += text;
     return stream;
+  }
+
+  /** What << writes for a value: manipulators adjust formatting; objects use a user operator<<. */
+  private outputText(v: RV, stream: RV): string | null {
+    if (v.t === 'manip') {
+      if (v.name === 'endl') return '\n';
+      if (v.name === 'fixed') this.coutFixed = true;
+      else if (v.name === 'setprecision') this.coutPrecision = v.arg ?? 6;
+      return null;
+    }
+    if (v.t === 'agg' && v.b.kind === 'struct') {
+      const fn = this.program.functions.get('operator<<');
+      if (fn) {
+        this.callFunction(fn, [stream, v], this.currentLine());
+        return null;
+      }
+    }
+    return this.coutText(v);
+  }
+
+  /** stringstream << value and stringstream >> variable. */
+  private sstreamOp(b: Block, op: string, right: Expr): RV {
+    const self: RV = { t: 'agg', b };
+    if (op === '<<') {
+      const v = this.evalR(right);
+      const text = this.outputText(v, self);
+      if (text !== null) b.buf = (b.buf ?? '') + text;
+      return self;
+    }
+    if (op !== '>>') throw new RuntimeErr('TypeError', 'Invalid stream operation', 'Use << to write to and >> to read from a stringstream.');
+    const lv = this.evalL(right);
+    if (b.failed) return self;
+    const { tok, pos } = Interpreter.readToken(b.buf ?? '', b.pos ?? 0);
+    b.pos = pos;
+    if (tok === undefined || !this.storeToken(lv, tok)) b.failed = true;
+    return self;
+  }
+
+  private streamMethod(b: Block, name: string, argExprs: Expr[]): RV {
+    switch (name) {
+      case 'str':
+        if (argExprs.length) {
+          const v = this.evalR(argExprs[0]!);
+          b.buf = v.t === 'str' ? v.v : '';
+          b.pos = 0;
+          b.failed = false;
+          return { t: 'void' };
+        }
+        return { t: 'str', v: b.buf ?? '' };
+      case 'clear':
+        b.failed = false;
+        return { t: 'void' };
+      case 'eof':
+        return { t: 'bool', v: (b.pos ?? 0) >= (b.buf ?? '').length };
+      case 'fail':
+        return { t: 'bool', v: !!b.failed };
+    }
+    throw new RuntimeErr('Unsupported', 'Unsupported method', `stringstream.${name}() isn't supported yet.`);
   }
 
   private coutText(v: RV): string {
@@ -2315,7 +2743,27 @@ class Interpreter {
   // ---- statements ----
 
   private execBlockBody(body: Stmt[], frame: CallFrame) {
-    for (const s of body) this.exec(s, frame);
+    for (let i = 0; i < body.length; i++) {
+      try {
+        this.exec(body[i]!, frame);
+      } catch (sig) {
+        // goto: jump to a label among this block's statements, or let an enclosing block try.
+        if (!(sig instanceof GotoSignal)) throw sig;
+        const at = body.findIndex((st) => st.type === 'Label' && st.label === sig.label);
+        if (at < 0) throw sig;
+        i = at - 1;
+      }
+    }
+  }
+
+  /** Does a catch clause of `type` (undefined = catch (...)) take this thrown value? */
+  private catches(type: TypeInfo | undefined, v: RV): boolean {
+    if (!type) return true;
+    if (v.t === 'agg' && v.b.kind === 'struct') return this.isA(v.b.struct, type.base);
+    if (v.t === 'str') return type.base === 'string' || (type.base === 'char' && type.ptr > 0);
+    if (v.t === 'float') return isFloatBase(type.base);
+    if (v.t === 'int' || v.t === 'long' || v.t === 'char' || v.t === 'bool') return (isIntBase(type.base) || type.base === 'char' || type.base === 'bool') && !type.ptr;
+    return false;
   }
 
   private withScope(frame: CallFrame, fn: () => void) {
@@ -2359,8 +2807,18 @@ class Interpreter {
         const p = this.evalR(s.arg);
         // delete runs the destructor first, while the object is still alive.
         if (p.t === 'ptr' && p.b && !p.b.freed && p.b.kind === 'struct') {
-          const dtor = this.findMethod(p.b.struct!, '~', 0);
-          if (dtor) this.callFunction(dtor, [], s.line, p.b);
+          // Destructors run from the object's real class down to its bases.
+          const chain: StructDef[] = [];
+          const walk = (def: StructDef | undefined) => {
+            if (!def || chain.includes(def)) return;
+            chain.push(def);
+            (def.bases ?? []).forEach((b) => walk(this.program.structs.get(b)));
+          };
+          walk(p.b.struct);
+          for (const def of chain) {
+            const dtor = def.methods.get('~')?.[0];
+            if (dtor) this.callFunction(dtor, [], s.line, p.b);
+          }
         }
         this.free(p, 'delete');
         return;
@@ -2478,6 +2936,50 @@ class Interpreter {
         });
         return;
       }
+      case 'Throw': {
+        this.step(s.line, s.range);
+        // `throw;` rethrows the exception being handled.
+        const value = s.value ? this.evalR(s.value) : this.stack[this.stack.length - 1]?.handling;
+        if (!value) throw new RuntimeErr('UncaughtException', 'Nothing to rethrow', '`throw;` was used outside a catch block.');
+        throw new CppThrow(value.t === 'agg' ? { t: 'agg', b: this.copyAgg(value.b, 'heap', null) } : value, s.line);
+      }
+      case 'Try': {
+        this.step(s.line, s.range);
+        try {
+          this.exec(s.body, frame);
+        } catch (sig) {
+          if (!(sig instanceof CppThrow)) throw sig;
+          const handler = s.handlers.find((h) => this.catches(h.type, sig.value));
+          if (!handler) throw sig;
+          this.step(handler.line);
+          const outer = frame.handling;
+          frame.handling = sig.value;
+          try {
+            this.withScope(frame, () => {
+              if (handler.name) {
+                const scope = frame.scopes[frame.scopes.length - 1]!;
+                const v = sig.value;
+                if (v.t === 'agg') scope.vars.set(handler.name, { b: v.b, whole: true });
+                else {
+                  const cell = this.alloc('scalar', 'stack', handler.type ?? this.typeOfValue(v), [v], undefined, handler.name);
+                  scope.owned.push(cell);
+                  scope.vars.set(handler.name, { b: cell, i: 0 });
+                }
+              }
+              this.execBlockBody(handler.body.body, frame);
+            });
+          } finally {
+            frame.handling = outer;
+          }
+        }
+        return;
+      }
+      case 'Label':
+        this.exec(s.body, frame);
+        return;
+      case 'Goto':
+        this.step(s.line, s.range);
+        throw new GotoSignal(s.label);
       case 'Switch': {
         this.step(s.line);
         const v = this.toNum(this.evalR(s.test));
@@ -2571,7 +3073,7 @@ class Interpreter {
     if (d.init && d.init.type !== 'InitList') init = this.evalR(d.init);
     const resolved: TypeInfo = ty.base === 'auto' && init ? this.typeOfValue(init) : ty;
 
-    if (!resolved.ptr && (CONTAINERS.has(resolved.base) || this.structOf(resolved))) {
+    if (!resolved.ptr && (CONTAINERS.has(resolved.base) || STREAM_TYPES.has(resolved.base) || this.structOf(resolved))) {
       let b: Block;
       if (init?.t === 'agg') b = this.copyAgg(init.b, region, scope.owned);
       else if (this.program.structs.get(resolved.base)?.methods.get(resolved.base)?.length) {

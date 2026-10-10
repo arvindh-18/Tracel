@@ -397,14 +397,8 @@ int main() {
     expectError('int main() {\n    int a = 10, b = 0;\n    int c = a % b;\n    return 0;\n}\n', 'DivisionByZero', 3);
   });
 
-  it('rejects unsupported features before running', () => {
+  it('rejects only what cannot run: inline assembly, local headers and unknown headers', () => {
     const cases: [string, number, RegExp][] = [
-      ['template <typename T>\nT id(T x) { return x; }\nint main() { return 0; }\n', 1, /templates/],
-      ['int main() {\n    goto end;\n    end: return 0;\n}\n', 2, /goto/],
-      ['union U { int a; float b; };\nint main() { return 0; }\n', 1, /unions/],
-      ['struct F { int a : 3; };\nint main() { return 0; }\n', 1, /bit-fields/],
-      ['class A {};\nclass B : public A {};\nint main() { return 0; }\n', 2, /inheritance/],
-      ['class A {\n    virtual void f() {}\n};\nint main() { return 0; }\n', 2, /virtual/],
       ['#include "helpers.h"\nint main() { return 0; }\n', 1, /single file/],
       ['#include <regex>\nint main() { return 0; }\n', 1, /doesn't provide <regex>/],
       ['int main() {\n    asm("nop");\n    return 0;\n}\n', 2, /assembly/],

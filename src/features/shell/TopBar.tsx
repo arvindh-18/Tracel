@@ -184,9 +184,9 @@ export const TopBar: React.FC<TopBarProps> = ({ onRun, onStop, onOpenShortcuts, 
               <h3 className={styles.infoTitle}>C and C++ subset</h3>
               <p>Interprets the program with real pointer arithmetic, typed memory blocks and safety checks.</p>
               <p className={styles.infoMeta}>
-                Supports arrays (1-D and 2-D), pointers, structs and classes, std::vector, std::stack, std::queue, printf/scanf and std::cout/cin.
-                Undefined behaviour stops the run with the exact line. For features it can't run (templates, inheritance),
-                you can ask Gemini to simulate the program with your own key; those traces are marked AI-simulated.
+                Supports pointers, arrays, classes with inheritance and virtual functions, templates, exceptions, operator
+                overloading, the STL containers (vector, map, set, priority_queue…), &lt;algorithm&gt;, strings and streams.
+                Undefined behaviour stops the run with the exact line.
               </p>
             </>
           )}

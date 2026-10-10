@@ -11,7 +11,24 @@ export interface TypeInfo {
 }
 
 /** Standard containers: each value is its own block (std::vector, std::map...). */
-export const CONTAINERS = new Set(['vector', 'stack', 'queue', 'deque', 'map', 'unordered_map', 'set', 'unordered_set', 'priority_queue']);
+export const CONTAINERS = new Set([
+  'vector', 'stack', 'queue', 'deque', 'map', 'unordered_map', 'set', 'unordered_set', 'priority_queue', 'multiset', 'multimap',
+]);
+/** std::stringstream and friends: a text buffer you can << into and >> out of. */
+export const STREAM_TYPES = new Set(['stringstream', 'istringstream', 'ostringstream']);
+/** The standard exception classes: struct-like objects with a message, in their inheritance chain. */
+export const STD_EXCEPTIONS: Record<string, string | null> = {
+  exception: null,
+  logic_error: 'exception',
+  runtime_error: 'exception',
+  invalid_argument: 'logic_error',
+  out_of_range: 'logic_error',
+  length_error: 'logic_error',
+  domain_error: 'logic_error',
+  overflow_error: 'runtime_error',
+  underflow_error: 'runtime_error',
+  range_error: 'runtime_error',
+};
 /** Every standard template the parser reads arguments for. */
 const TEMPLATES = new Set([...CONTAINERS, 'pair', 'greater', 'less']);
 
@@ -77,6 +94,10 @@ type StmtNode =
   | { type: 'Continue'; line: number }
   | { type: 'Delete'; line: number; arg: Expr; array: boolean }
   | { type: 'Switch'; line: number; test: Expr; cases: { test?: Expr; line: number; body: Stmt[] }[] }
+  | { type: 'Throw'; line: number; value?: Expr }
+  | { type: 'Try'; line: number; body: Stmt & { type: 'Block' }; handlers: { type?: TypeInfo; name?: string; line: number; body: Stmt & { type: 'Block' } }[] }
+  | { type: 'Label'; line: number; label: string; body: Stmt }
+  | { type: 'Goto'; line: number; label: string }
   | { type: 'Empty'; line: number };
 
 export interface Param {
@@ -95,13 +116,21 @@ export interface FunctionDef {
   kind?: 'method' | 'ctor' | 'dtor';
   /** Constructor initializer list: Node(int v) : val(v), next(nullptr) {} */
   inits?: { name: string; args: Expr[] }[];
+  /** static member function: no object. */
+  isStatic?: boolean;
 }
 
 export interface StructDef {
   name: string;
-  fields: { name: string; type: TypeInfo; arraySize?: Expr | null; innerDims?: Expr[]; init?: Expr }[];
+  /** Includes inherited fields first, in base order. */
+  fields: { name: string; type: TypeInfo; arraySize?: Expr | null; innerDims?: Expr[]; init?: Expr; bits?: number }[];
   /** Methods by name; the constructor is under the class name and the destructor under "~". */
   methods: Map<string, FunctionDef[]>;
+  bases?: string[];
+  /** static data members: one shared variable named Class::name. */
+  statics?: { name: string; type: TypeInfo; init?: Expr }[];
+  /** union: all members share one storage slot. */
+  isUnion?: boolean;
 }
 
 export interface Program {
@@ -116,20 +145,12 @@ const BASE_TYPES = new Set([
   'int', 'char', 'short', 'long', 'float', 'double', 'bool', 'void', 'unsigned', 'signed',
   'auto', 'size_t', 'string', 'long long',
 ]);
-const QUALIFIERS = new Set(['const', 'static', 'struct', 'inline', 'volatile', 'register', 'constexpr']);
+const QUALIFIERS = new Set(['const', 'static', 'struct', 'union', 'class', 'enum', 'inline', 'volatile', 'register', 'constexpr', 'mutable', 'typename']);
+const STREAM_BASES = new Set(['ostream', 'istream']);
+const AUTO: TypeInfo = { base: 'auto', args: [], ptr: 0, ref: false };
 const UNSUPPORTED: Record<string, string> = {
-  template: "Tracel's C++ engine doesn't support templates you define yourself yet. Built-in std::vector, std::stack and std::queue are supported.",
-  virtual: "Tracel's C++ engine doesn't support virtual functions or inheritance yet.",
-  asm: "Tracel's C/C++ engine doesn't support inline assembly.",
-  __asm__: "Tracel's C/C++ engine doesn't support inline assembly.",
-  friend: "Tracel's C++ engine doesn't support friend declarations yet.",
-  namespace: "Tracel's C++ engine doesn't support defining your own namespaces yet.",
-  goto: "Tracel's C/C++ engine does not support goto statements.",
-  operator: "Tracel's C++ engine doesn't support operator overloading yet.",
-  try: "Tracel's C++ engine doesn't support exceptions (try/catch) yet.",
-  throw: "Tracel's C++ engine doesn't support exceptions (throw) yet.",
-  union: "Tracel's C/C++ engine doesn't support unions yet.",
-  enum: "Tracel's C/C++ engine doesn't support enums yet.",
+  asm: "Inline assembly can't run in Tracel: it is machine code for a real CPU, which the interpreter doesn't model.",
+  __asm__: "Inline assembly can't run in Tracel: it is machine code for a real CPU, which the interpreter doesn't model.",
 };
 
 export function parseProgram(source: string): Program {
@@ -140,8 +161,20 @@ class Parser {
   private pos = 0;
   private structs = new Map<string, StructDef>();
   private typedefs = new Map<string, TypeInfo>();
+  private functions = new Map<string, FunctionDef>();
+  private enums = new Map<string, number>();
+  private namespaces = new Set<string>();
+  private templateFns = new Set<string>();
+  private templateStructs = new Set<string>();
+  private nsDepth = 0;
+  private staticProtos = new Set<string>();
 
-  constructor(private tokens: Token[]) {}
+  constructor(private tokens: Token[]) {
+    // The standard exception classes, so they can be thrown, caught and derived from.
+    for (const [name, base] of Object.entries(STD_EXCEPTIONS)) {
+      this.structs.set(name, { name, fields: [{ name: 'message', type: { base: 'string', args: [], ptr: 0, ref: false } }], methods: new Map(), bases: base ? [base] : [] });
+    }
+  }
 
   // -- token helpers --
 
@@ -189,13 +222,23 @@ class Parser {
     let t = this.peek(offset);
     while (t.kind === 'id' && QUALIFIERS.has(t.text)) t = this.peek(++offset);
     if (t.kind === 'id' && t.text === 'std' && this.is('::', offset + 1)) t = this.peek((offset += 2));
+    while (t.kind === 'id' && this.namespaces.has(t.text) && this.is('::', offset + 1)) t = this.peek((offset += 2));
     if (t.kind !== 'id') return false;
-    return BASE_TYPES.has(t.text) || TEMPLATES.has(t.text) || t.text === 'function' || this.structs.has(t.text) || this.typedefs.has(t.text);
+    return (
+      BASE_TYPES.has(t.text) ||
+      TEMPLATES.has(t.text) ||
+      STREAM_TYPES.has(t.text) ||
+      STREAM_BASES.has(t.text) ||
+      t.text === 'function' ||
+      this.structs.has(t.text) ||
+      this.typedefs.has(t.text)
+    );
   }
 
   private baseType(): TypeInfo {
     while (this.peek().kind === 'id' && QUALIFIERS.has(this.peek().text)) this.pos++;
     if (this.is('std') && this.is('::', 1)) this.pos += 2;
+    while (this.peek().kind === 'id' && this.namespaces.has(this.peek().text) && this.is('::', 1)) this.pos += 2;
     const start = this.peek();
     let unsigned = false;
     const words: string[] = [];
@@ -238,7 +281,15 @@ class Parser {
         while (this.accept(',')) t.args.push(this.fullType());
       }
       this.closeAngle();
-    } else if (!BASE_TYPES.has(base) && !this.structs.has(base)) {
+    } else if (this.templateStructs.has(base) && this.is('<')) {
+      // Stack<int>: a class template; its type parameters behave as auto inside.
+      this.next();
+      if (!this.is('>')) {
+        t.args.push(this.fullType());
+        while (this.accept(',')) t.args.push(this.fullType());
+      }
+      this.closeAngle();
+    } else if (!BASE_TYPES.has(base) && !this.structs.has(base) && !STREAM_TYPES.has(base) && !STREAM_BASES.has(base)) {
       throw new CompileError(`Unknown type '${base}'`, start.line, start.col);
     }
     while (this.peek().kind === 'id' && this.peek().text === 'const') this.pos++;
@@ -279,7 +330,11 @@ class Parser {
       while (this.accept(',')) bindings.push(this.ident());
       this.expect(']');
     }
-    const name = bindings ? `[${bindings.join(', ')}]` : this.ident();
+    let name = bindings ? `[${bindings.join(', ')}]` : this.ident();
+    if (!bindings && this.structs.has(name) && this.is('::')) {
+      this.next();
+      name = `${name}::${this.ident()}`; // int Counter::count = 0;
+    }
     const d: Declarator = { name, type, line, bindings };
     if (bindings) {
       this.expect('=');
@@ -316,11 +371,45 @@ class Parser {
   // -- top level --
 
   program(): Program {
-    const functions = new Map<string, FunctionDef>();
+    const functions = this.functions;
     const globals: Stmt[] = [];
+    let inTemplate = false;
     while (this.peek().kind !== 'eof') {
       this.checkUnsupported(this.peek());
       if (this.accept(';')) continue;
+      if (this.nsDepth > 0 && this.accept('}')) {
+        this.nsDepth--;
+        continue;
+      }
+      if (this.is('namespace') && this.peek(1).kind === 'id' && this.is('{', 2)) {
+        // namespace geo { ... }: names are used directly; geo::name also works.
+        this.next();
+        this.namespaces.add(this.ident());
+        this.expect('{');
+        this.nsDepth++;
+        continue;
+      }
+      if (this.is('template')) {
+        this.templateHeader();
+        inTemplate = true;
+        continue;
+      }
+      if (this.is('enum')) {
+        this.enumDefinition();
+        continue;
+      }
+      if ((this.is('struct') || this.is('class') || this.is('union')) && this.peek(1).kind === 'id' && (this.is('{', 2) || this.is(';', 2) || this.is(':', 2))) {
+        const kw = this.next().text;
+        const name = this.ident();
+        if (inTemplate) this.templateStructs.add(name);
+        inTemplate = false;
+        const bases = this.baseList();
+        this.structBody(name, kw === 'class', bases, kw === 'union');
+        this.expect(';');
+        continue;
+      }
+      const wasTemplate = inTemplate;
+      inTemplate = false;
       if (this.is('using') && this.peek(1).kind === 'id' && this.is('=', 2)) {
         // using ll = long long;
         this.next();
@@ -351,7 +440,7 @@ class Parser {
       }
       const start = this.peek();
       // Out-of-line constructor or destructor: Node::Node(...) { }  /  Node::~Node() { }
-      if (start.kind === 'id' && this.structs.has(start.text) && this.is('::', 1)) {
+      if (start.kind === 'id' && this.structs.has(start.text) && this.is('::', 1) && (this.is('~', 2) || this.is(start.text, 2))) {
         const owner = this.next().text;
         this.expect('::');
         const dtor = this.accept('~');
@@ -364,16 +453,20 @@ class Parser {
       const save = this.pos;
       const retType = { ...base };
       this.pointerSuffix(retType);
-      // Out-of-line method: int Stack::top() { ... }
+      // Out-of-line method: int Stack::top() { ... }   or a static member: int Counter::count = 0;
       if (this.peek().kind === 'id' && this.structs.has(this.peek().text) && this.is('::', 1)) {
-        const def = this.structs.get(this.next().text)!;
-        this.expect('::');
-        this.memberDefinition(def, this.ident(), retType, start.line, 'method');
-        continue;
+        const def = this.structs.get(this.peek().text)!;
+        if (this.is('(', 3) || this.is('operator', 2)) {
+          this.pos += 2;
+          this.memberDefinition(def, this.memberName(), retType, start.line, 'method');
+          continue;
+        }
       }
-      if (this.peek().kind === 'id' && this.is('(', 1)) {
-        const name = this.ident();
+      if ((this.peek().kind === 'id' && this.is('(', 1)) || this.is('operator')) {
+        const name = this.memberName();
+        if (wasTemplate) this.templateFns.add(name);
         const params = this.params();
+        this.skipFunctionSuffix();
         if (this.accept(';')) continue; // prototype
         const body = this.block();
         functions.set(name, { name, returnType: retType, params, body, line: start.line });
@@ -383,6 +476,109 @@ class Parser {
       globals.push(this.declRest(base, start.line));
     }
     return { functions, structs: this.structs, globals };
+  }
+
+  /** template <typename T, class U, int N>: type parameters become auto. */
+  private templateHeader() {
+    this.expect('template');
+    this.expect('<');
+    while (!this.is('>')) {
+      if (this.accept('typename') || this.accept('class')) {
+        if (this.peek().kind === 'id') this.typedefs.set(this.ident(), AUTO);
+      } else {
+        this.fullType();
+        if (this.peek().kind === 'id') this.next();
+      }
+      if (this.accept('=')) this.assignment(); // default argument
+      if (!this.is('>')) this.expect(',');
+    }
+    this.closeAngle();
+  }
+
+  /** enum Color { RED, GREEN = 5 }; and enum class Dir : int { Up, Down }; */
+  private enumDefinition() {
+    this.expect('enum');
+    const scoped = this.accept('class') || this.accept('struct');
+    const name = this.peek().kind === 'id' ? this.ident() : null;
+    if (this.accept(':')) this.fullType();
+    if (name) this.typedefs.set(name, { base: 'int', args: [], ptr: 0, ref: false });
+    if (this.accept(';')) return;
+    this.expect('{');
+    let next = 0;
+    while (!this.accept('}')) {
+      const member = this.ident();
+      if (this.accept('=')) {
+        const e = this.ternary();
+        next = this.constValue(e);
+      }
+      if (!scoped) this.enums.set(member, next);
+      if (name) this.enums.set(`${name}::${member}`, next);
+      next++;
+      if (!this.is('}')) this.expect(',');
+    }
+    if (this.peek().kind === 'id') this.next(); // enum Color { ... } c;
+    this.expect(';');
+  }
+
+  private constValue(e: Expr): number {
+    if (e.type === 'Num') return e.value;
+    if (e.type === 'Char') return e.value;
+    if (e.type === 'Unary' && e.op === '-') return -this.constValue(e.arg);
+    if (e.type === 'Binary') {
+      const a = this.constValue(e.left);
+      const b = this.constValue(e.right);
+      const ops: Record<string, number> = { '+': a + b, '-': a - b, '*': a * b, '<<': a << b, '|': a | b, '&': a & b };
+      if (e.op in ops) return ops[e.op]!;
+    }
+    throw new CompileError('Enum values must be constant numbers.', e.line, 0);
+  }
+
+  /** : public Base, private Other */
+  private baseList(): string[] {
+    const bases: string[] = [];
+    if (!this.accept(':')) return bases;
+    do {
+      while (['public', 'private', 'protected', 'virtual'].includes(this.peek().text)) this.next();
+      if (this.is('std') && this.is('::', 1)) this.pos += 2;
+      const t = this.peek();
+      const base = this.ident();
+      if (!this.structs.has(base)) throw new CompileError(`Unknown base class '${base}'`, t.line, t.col);
+      bases.push(base);
+    } while (this.accept(','));
+    return bases;
+  }
+
+  /** A function or method name, including operator overloads: operator<, operator(), operator[]. */
+  private memberName(): string {
+    if (!this.accept('operator')) return this.ident();
+    if (this.accept('(')) {
+      this.expect(')');
+      return 'operator()';
+    }
+    if (this.accept('[')) {
+      this.expect(']');
+      return 'operator[]';
+    }
+    const t = this.next();
+    if (t.kind !== 'op') throw new CompileError(`Unsupported operator '${t.text}'`, t.line, t.col);
+    return `operator${t.text}`;
+  }
+
+  /** const, override, final, noexcept, = 0, = default after a parameter list. */
+  private skipFunctionSuffix() {
+    for (;;) {
+      if (this.accept('const') || this.accept('override') || this.accept('final') || this.accept('noexcept')) continue;
+      if (this.is('=') && (this.peek(1).text === '0' || this.is('default', 1) || this.is('delete', 1))) {
+        this.pos += 2;
+        continue;
+      }
+      if (this.is('->')) {
+        this.next();
+        this.fullType();
+        continue;
+      }
+      return;
+    }
   }
 
   private typedef() {
@@ -402,11 +598,15 @@ class Parser {
     this.expect(';');
   }
 
-  private structBody(name: string, isClass = false) {
+  private structBody(name: string, isClass = false, bases: string[] = [], isUnion = false) {
     const def: StructDef = this.structs.get(name) ?? { name, fields: [], methods: new Map() };
     this.structs.set(name, def); // registered first so fields can be Node*
     if (!this.accept('{')) return;
     void isClass; // access control isn't enforced; public/private only matter to the compiler
+    def.bases = bases;
+    def.isUnion = isUnion;
+    // Inherited fields come first, like in memory.
+    def.fields = bases.flatMap((b) => this.structs.get(b)?.fields ?? []).map((f) => ({ ...f }));
     while (!this.accept('}')) {
       const t = this.peek();
       this.checkUnsupported(t);
@@ -415,45 +615,71 @@ class Parser {
         continue;
       }
       if (this.accept(';')) continue;
+      if (this.is('enum')) {
+        this.enumDefinition();
+        continue;
+      }
+      if (this.accept('friend')) {
+        // friend functions (often operator<<) are ordinary functions.
+        if (this.accept('class') || this.accept('struct')) {
+          this.ident();
+          this.expect(';');
+          continue;
+        }
+        const fstart = this.peek();
+        const ret = this.fullType();
+        const fname = this.memberName();
+        const params = this.params();
+        this.skipFunctionSuffix();
+        if (this.accept(';')) continue;
+        this.functions.set(fname, { name: fname, returnType: ret, params, body: this.block(), line: fstart.line });
+        continue;
+      }
+      let isStatic = false;
+      for (;;) {
+        if (this.accept('virtual') || this.accept('explicit') || this.accept('inline') || this.accept('constexpr')) continue;
+        if (this.accept('static')) {
+          isStatic = true;
+          continue;
+        }
+        break;
+      }
       // Constructor or destructor
-      if ((t.kind === 'id' && t.text === name && this.is('(', 1)) || (this.is('~') && this.is(name, 1))) {
+      if ((this.peek().kind === 'id' && this.peek().text === name && this.is('(', 1)) || (this.is('~') && this.is(name, 1))) {
         const dtor = this.accept('~');
         this.next(); // the class name
         this.memberDefinition(def, dtor ? '~' : name, { base: 'void', args: [], ptr: 0, ref: false }, t.line, dtor ? 'dtor' : 'ctor');
         continue;
-      }
-      if (this.is('static')) {
-        throw new CompileError("Tracel's C++ engine doesn't support static members yet.", t.line, t.col, 'unsupported');
       }
       const base = this.baseType();
       // Method: type name(params) { body } or a prototype defined later.
       const save = this.pos;
       const retType = { ...base };
       this.pointerSuffix(retType);
-      if (this.peek().kind === 'id' && this.is('(', 1)) {
-        const methodName = this.ident();
-        this.memberDefinition(def, methodName, retType, t.line, 'method');
+      if ((this.peek().kind === 'id' && this.is('(', 1)) || this.is('operator')) {
+        const methodName = this.memberName();
+        this.memberDefinition(def, methodName, retType, t.line, 'method', isStatic);
         continue;
       }
       this.pos = save;
       do {
         const d = this.declarator(base);
-        if (this.is(':')) {
-          const c = this.peek();
-          throw new CompileError("Tracel's C/C++ engine doesn't support bit-fields.", c.line, c.col, 'unsupported');
+        if (isStatic) {
+          (def.statics ??= []).push({ name: d.name, type: d.type, init: d.init });
+          continue;
         }
-        def.fields.push({ name: d.name, type: d.type, arraySize: d.arraySize, innerDims: d.innerDims, init: d.init });
+        let bits: number | undefined;
+        if (this.accept(':')) bits = this.constValue(this.ternary()); // bit-field
+        def.fields.push({ name: d.name, type: d.type, arraySize: d.arraySize, innerDims: d.innerDims, init: d.init, bits });
       } while (this.accept(','));
       this.expect(';');
     }
   }
 
   /** Parses a member's parameters, constructor initializers and body (or a prototype ending in ';'). */
-  private memberDefinition(def: StructDef, name: string, returnType: TypeInfo, line: number, kind: 'method' | 'ctor' | 'dtor') {
+  private memberDefinition(def: StructDef, name: string, returnType: TypeInfo, line: number, kind: 'method' | 'ctor' | 'dtor', isStatic = false) {
     const params = this.params();
-    while (this.accept('const')) {
-      // const member function
-    }
+    this.skipFunctionSuffix();
     let inits: { name: string; args: Expr[] }[] | undefined;
     if (kind === 'ctor' && this.accept(':')) {
       inits = [];
@@ -469,10 +695,14 @@ class Parser {
         inits.push({ name: field, args });
       } while (this.accept(','));
     }
-    if (this.accept(';')) return; // declared here, defined out of line
+    if (this.accept(';')) {
+      if (isStatic) this.staticProtos.add(`${def.name}::${name}`);
+      return; // declared here, defined out of line
+    }
     const body = this.block();
-    const fn: FunctionDef = { name: kind === 'ctor' ? def.name : kind === 'dtor' ? `~${def.name}` : name, returnType, params, body, line, owner: def.name, kind, inits };
+    const fn: FunctionDef = { name: kind === 'ctor' ? def.name : kind === 'dtor' ? `~${def.name}` : name, returnType, params, body, line, owner: def.name, kind, inits, isStatic };
     const list = def.methods.get(name) ?? [];
+    if (!isStatic && this.staticProtos.has(`${def.name}::${name}`)) fn.isStatic = true;
     // An out-of-line definition replaces a prototype-only entry with the same arity.
     def.methods.set(name, [...list.filter((m) => m.params.length !== params.length), fn]);
   }
@@ -586,10 +816,51 @@ class Parser {
         }
         case 'switch':
           return this.switchStatement();
+        case 'throw': {
+          this.next();
+          const value = this.is(';') ? undefined : this.expr();
+          this.expect(';');
+          return { type: 'Throw', line, value };
+        }
+        case 'try': {
+          this.next();
+          const body = this.block();
+          const handlers: { type?: TypeInfo; name?: string; line: number; body: Stmt & { type: 'Block' } }[] = [];
+          while (this.is('catch')) {
+            const hline = this.next().line;
+            this.expect('(');
+            let type: TypeInfo | undefined;
+            let name: string | undefined;
+            if (!this.accept('...')) {
+              type = this.fullType();
+              if (this.peek().kind === 'id') name = this.ident();
+            }
+            this.expect(')');
+            handlers.push({ type, name, line: hline, body: this.block() });
+          }
+          if (!handlers.length) throw new CompileError("A try block needs at least one catch", line, 0);
+          return { type: 'Try', line, body, handlers };
+        }
+        case 'goto': {
+          this.next();
+          const label = this.ident();
+          this.expect(';');
+          return { type: 'Goto', line, label };
+        }
       }
     }
 
-    if (this.isTypeStart() && !(this.peek(1).kind === 'op' && ['(', '::'].includes(this.peek(1).text) && BASE_TYPES.has(t.text))) {
+    // label: statement   (for goto)
+    if (t.kind === 'id' && this.is(':', 1) && !this.isTypeStart()) {
+      this.pos += 2;
+      return { type: 'Label', line, label: t.text, body: this.is('}') ? { type: 'Empty', line } : this.statement() };
+    }
+
+    if (
+      this.isTypeStart() &&
+      !(this.peek(1).kind === 'op' && ['(', '::'].includes(this.peek(1).text) && (BASE_TYPES.has(t.text) || this.typedefs.get(t.text)?.base === 'auto')) &&
+      !(this.structs.has(t.text) && this.is('::', 1))
+    ) {
       return this.declRest(this.baseType(), line);
     }
 
@@ -833,6 +1104,56 @@ class Parser {
           return { type: 'Call', line, callee: { type: 'Ident', line, name: t.text }, args: items };
         }
         if (t.text === 'std' && this.accept('::')) return this.primary();
+        if (this.namespaces.has(t.text) && this.accept('::')) return this.primary();
+        if (t.text === 'numeric_limits' && this.is('<')) {
+          // numeric_limits<int>::max() / ::min()
+          this.next();
+          const of = this.fullType();
+          this.closeAngle();
+          this.expect('::');
+          const which = this.ident();
+          this.expect('(');
+          this.expect(')');
+          const wide = of.base === 'long' || of.base === 'long long';
+          const limits: Record<string, [string, string]> = { max: wide ? ['9223372036854775807', ''] : ['2147483647', ''], min: wide ? ['-9223372036854775808', ''] : ['-2147483648', ''] };
+          const lim = limits[which];
+          if (!lim) throw new CompileError(`numeric_limits::${which} isn't supported`, line, t.col);
+          const value = Number(lim[0]);
+          return wide ? { type: 'Num', line, value, float: false, big: lim[0] } : { type: 'Num', line, value, float: false };
+        }
+        // Enum constants: RED, Color::RED, Dir::Up
+        if (this.is('::') && this.enums.has(`${t.text}::${this.peek(1).text}`)) {
+          this.next();
+          return { type: 'Num', line, value: this.enums.get(`${t.text}::${this.next().text}`)!, float: false };
+        }
+        if (this.enums.has(t.text) && !this.is('(')) return { type: 'Num', line, value: this.enums.get(t.text)!, float: false };
+        // Class::member: a static member, a static function, or Base::method() inside a derived class
+        if (this.structs.has(t.text) && this.is('::') && this.peek(1).kind === 'id') {
+          this.next();
+          return { type: 'Ident', line, name: `${t.text}::${this.next().text}` };
+        }
+        // max2<int>(a, b): explicit template arguments are not needed at run time.
+        if (this.templateFns.has(t.text) && this.is('<')) {
+          this.next();
+          for (let depth = 1; depth > 0; ) {
+            if (this.is('>>')) {
+              const tk = this.peek();
+              this.tokens.splice(this.pos, 1, { ...tk, text: '>' }, { ...tk, text: '>', col: tk.col + 1 });
+            }
+            const tk = this.next();
+            if (tk.text === '<') depth++;
+            else if (tk.text === '>') depth--;
+            else if (tk.kind === 'eof') throw new CompileError('Unclosed template argument list', line, t.col);
+          }
+          return { type: 'Ident', line, name: t.text };
+        }
+        // T() / T(x) for a template type parameter
+        if (this.typedefs.get(t.text)?.base === 'auto' && this.is('(')) {
+          this.next();
+          const arg = this.is(')') ? ({ type: 'Num', line, value: 0, float: false } as Expr) : this.expr();
+          this.expect(')');
+          return { type: 'Cast', line, to: AUTO, arg };
+        }
         if (t.text === 'string' && this.is('::')) {
           this.next();
           return { type: 'Ident', line, name: this.ident() }; // string::npos
