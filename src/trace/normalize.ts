@@ -35,6 +35,8 @@ export interface RawTrace {
   stats?: { durationMs?: number };
   /** Set when an AI model produced the trace instead of a real interpreter. */
   engine?: 'ai';
+  /** The engine recorded each step just before its line ran (the Python tracer and the C/C++ interpreter). */
+  recordedBefore?: boolean;
   aiNarrations?: (string | undefined)[];
   aiLensHints?: Record<string, LensKind>;
 }
@@ -80,7 +82,33 @@ function heapObjectsEqual(
   return true;
 }
 
-export function normalize(raw: RawTrace): Trace {
+/**
+ * Engines record a step just before its line runs. For display, a step should
+ * show what its line did, so each step takes the state recorded at the next
+ * one: while line L is highlighted, line L's effect is on screen. The step
+ * keeps its own line, kind, range, error and line-level events (branch taken,
+ * loop iteration). The last step and exception steps keep their own state.
+ */
+export function showEffectsOnLine(steps: RawStep[]): RawStep[] {
+  return steps.map((step, i) => {
+    const next = steps[i + 1];
+    // Return steps show the function's frame with its return value, so they keep their own state.
+    if (!next || step.kind === 'exception' || step.kind === 'return' || step.error) return step;
+    return {
+      ...next,
+      line: step.line,
+      kind: step.kind,
+      range: step.range,
+      error: undefined,
+      explicitEvents: step.explicitEvents,
+      // The running frame is still on this line.
+      frames: next.frames.map((f, idx) => (idx === next.frames.length - 1 && next.frames.length === step.frames.length ? { ...f, line: step.line } : f)),
+    };
+  });
+}
+
+export function normalize(input: RawTrace): Trace {
+  const raw: RawTrace = input.recordedBefore ? { ...input, steps: showEffectsOnLine(input.steps) } : input;
   const heapVersions: Record<HeapId, HeapObject[]> = {};
   const currentVersions: Record<HeapId, number> = {};
   const steps: Step[] = [];

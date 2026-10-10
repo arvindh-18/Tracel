@@ -87,11 +87,12 @@ export function narrate(step: Step, prevStep?: Step): string {
     }
   }
 
-  const ranLine = prevStep ? prevStep.line : null;
-  const linePrefix = ranLine ? `Line ${ranLine} ran` : `Step ${step.index}`;
+  // A step shows the effect of its own line (see showEffectsOnLine).
+  void prevStep;
+  const linePrefix = `Line ${step.line}`;
 
   if (changes.length === 0) {
-    return `${linePrefix} · next: line ${step.line}`;
+    return `${linePrefix} ran`;
   }
 
   if (changes.length <= 2) {

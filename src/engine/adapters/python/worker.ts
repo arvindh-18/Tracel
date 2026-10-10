@@ -77,6 +77,7 @@ self.onmessage = async (e: MessageEvent) => {
         status: parsed.status,
         error: parsed.error,
         stats: { durationMs: 0 },
+        recordedBefore: true,
       };
 
       self.postMessage({ type: 'result', id, rawTrace });

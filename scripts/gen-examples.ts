@@ -29,7 +29,7 @@ async function pythonRunner() {
   return async (source: string): Promise<RawTrace> => {
     const json = await pyodide.runPythonAsync(`run_tracel(${JSON.stringify(source)}, "", ${STEP_LIMIT})`);
     const parsed = JSON.parse(json);
-    const raw: RawTrace = { language: 'python', source, steps: parsed.steps, stdout: parsed.stdout, status: parsed.status, error: parsed.error ?? undefined };
+    const raw: RawTrace = { language: 'python', source, steps: parsed.steps, stdout: parsed.stdout, status: parsed.status, error: parsed.error ?? undefined, recordedBefore: true };
     if (raw.error) raw.error = enhancePythonError(raw.error);
     return raw;
   };

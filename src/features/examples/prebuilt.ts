@@ -6,7 +6,7 @@ import { EXAMPLES } from './registry';
 // JSON file. Editing the code falls back to a live run.
 
 /** Bump when the trace format changes; older files are then ignored. */
-export const PREBUILT_FORMAT = 1;
+export const PREBUILT_FORMAT = 2;
 
 export interface PrebuiltExample {
   format: number;

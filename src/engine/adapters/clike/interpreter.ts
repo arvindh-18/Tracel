@@ -201,6 +201,7 @@ class Interpreter {
       stdout: this.stdout,
       status,
       error,
+      recordedBefore: true,
     });
 
     try {
@@ -2516,12 +2517,15 @@ class Interpreter {
     this.loopCounts.set(s, 0);
     let first = true;
     for (;;) {
-      if (!first) this.step(s.line); // back at the loop header before re-checking
+      if (!first) {
+        // Back at the loop header: the update (i++) and the re-check belong to this line.
+        this.step(s.line);
+        update?.();
+      }
       first = false;
       if (!test()) break;
       this.iterate(s);
       if (this.runBody(body, frame) === 'break') break;
-      update?.();
     }
   }
 
